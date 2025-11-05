@@ -5,6 +5,7 @@ const state = {
   localStream: null,
   screenStream: null,
   peers: new Map(), // peerId -> { pc, streams: { cam, screen }, videoEl }
+  sharedPeerId: null,
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' }
   ]
@@ -228,11 +229,25 @@ async function exitFullscreen() {
   }
 }
 
+function findSharedVideoEl() {
+  // Prefer the remote video element of the participant who is sharing
+  if (state.sharedPeerId) {
+    const peer = state.peers.get(state.sharedPeerId);
+    if (peer?.videoEl) return peer.videoEl;
+  }
+  // Fallback to any remote video if present
+  const anyRemote = remoteVideos.querySelector('video');
+  if (anyRemote) return anyRemote;
+  // Fallback to local if available
+  if (localVideo?.srcObject) return localVideo;
+  return null;
+}
+
 function toggleFullscreen() {
   if (isFullscreen()) {
     exitFullscreen();
   } else {
-    const target = document.querySelector('main') || document.documentElement;
+    const target = findSharedVideoEl() || document.querySelector('main') || document.documentElement;
     enterFullscreen(target);
   }
   // Defer UI update until after the state changes
@@ -297,6 +312,8 @@ function wireUI() {
       state.screenStream = stream;
       addScreenTracksToAll();
       state.socket?.emit('screen-share', { roomId: state.roomId, action: 'start' });
+      // Mark ourselves as the current sharer locally as well
+      state.sharedPeerId = state.socket?.id || null;
       updateControls();
       stream.getVideoTracks()[0].addEventListener('ended', () => {
         $('stopShare').click();
@@ -309,6 +326,8 @@ function wireUI() {
   $('stopShare').onclick = () => {
     stopScreenTracks();
     state.socket?.emit('screen-share', { roomId: state.roomId, action: 'stop' });
+    if (state.sharedPeerId === state.socket?.id) state.sharedPeerId = null;
+    updateControls();
   };
 
   const fsBtn = $('fullscreenShare');
@@ -369,10 +388,20 @@ function connectSocket() {
 
   socket.on('participant-left', ({ id }) => {
     removePeer(id);
+    if (state.sharedPeerId === id) {
+      state.sharedPeerId = null;
+      updateControls();
+    }
   });
 
   socket.on('screen-share', ({ participantId, action }) => {
     appendChat({ from: participantId, message: `screen ${action}`, ts: Date.now() });
+    if (action === 'start') {
+      state.sharedPeerId = participantId;
+    } else if (action === 'stop') {
+      if (state.sharedPeerId === participantId) state.sharedPeerId = null;
+    }
+    updateControls();
   });
 
   socket.on('disconnect', () => {
