@@ -32,12 +32,65 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
+function updateControls() {
+  const joinBtn = $('joinBtn');
+  const leaveBtn = $('leaveBtn');
+  const toggleCam = $('toggleCam');
+  const toggleMic = $('toggleMic');
+  const shareScreen = $('shareScreen');
+  const stopShare = $('stopShare');
+  const sendChat = $('sendChat');
+
+  const connected = !!state.socket && !!state.socket.connected;
+  const camTrack = state.localStream?.getVideoTracks?.()[0];
+  const micTrack = state.localStream?.getAudioTracks?.()[0];
+  const camEnabled = !!camTrack && camTrack.enabled !== false;
+  const micEnabled = !!micTrack && micTrack.enabled !== false;
+  const sharing = !!state.screenStream;
+
+  // Join/Leave
+  if (joinBtn) joinBtn.disabled = connected;
+  if (leaveBtn) leaveBtn.disabled = !connected;
+
+  // Chat send only when connected
+  if (sendChat) sendChat.disabled = !connected;
+
+  // Camera button
+  if (toggleCam) {
+    toggleCam.disabled = !state.localStream;
+    toggleCam.classList.remove('on', 'off');
+    toggleCam.classList.add(camEnabled ? 'on' : 'off');
+    toggleCam.textContent = camEnabled ? 'Camera On' : 'Camera Off';
+  }
+
+  // Mic button
+  if (toggleMic) {
+    toggleMic.disabled = !state.localStream;
+    toggleMic.classList.remove('on', 'off');
+    toggleMic.classList.add(micEnabled ? 'on' : 'off');
+    toggleMic.textContent = micEnabled ? 'Mic On' : 'Mic Off';
+  }
+
+  // Screen share
+  if (shareScreen) {
+    shareScreen.disabled = sharing || !connected;
+    shareScreen.classList.remove('pulse');
+    shareScreen.textContent = 'Share Screen';
+  }
+  if (stopShare) {
+    stopShare.disabled = !sharing;
+    stopShare.classList.toggle('pulse', sharing);
+    stopShare.textContent = sharing ? 'Sharing… Stop' : 'Stop Share';
+  }
+}
+
 async function initLocalMedia() {
   if (state.localStream) return state.localStream;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     state.localStream = stream;
     localVideo.srcObject = stream;
+    updateControls();
     return stream;
   } catch (e) {
     alert('Failed to get camera/mic: ' + e.message);
@@ -135,6 +188,7 @@ function stopScreenTracks() {
   if (!state.screenStream) return;
   state.screenStream.getTracks().forEach((t) => t.stop());
   state.screenStream = null;
+  updateControls();
 }
 
 function wireUI() {
@@ -143,6 +197,7 @@ function wireUI() {
     state.roomId = $('roomId').value || 'demo';
     await initLocalMedia();
     connectSocket();
+    updateControls();
   };
 
   $('leaveBtn').onclick = () => {
@@ -153,6 +208,7 @@ function wireUI() {
     setStatus('Disconnected');
     state.socket?.disconnect();
     stopScreenTracks();
+    updateControls();
   };
 
   $('sendChat').onclick = () => {
@@ -166,12 +222,14 @@ function wireUI() {
     if (!state.localStream) return;
     const v = state.localStream.getVideoTracks()[0];
     if (v) { v.enabled = !v.enabled; localVideo.classList.toggle('muted', !v.enabled); }
+    updateControls();
   };
 
   $('toggleMic').onclick = () => {
     if (!state.localStream) return;
     const a = state.localStream.getAudioTracks()[0];
     if (a) { a.enabled = !a.enabled; }
+    updateControls();
   };
 
   $('shareScreen').onclick = async () => {
@@ -180,6 +238,7 @@ function wireUI() {
       state.screenStream = stream;
       addScreenTracksToAll();
       state.socket?.emit('screen-share', { roomId: state.roomId, action: 'start' });
+      updateControls();
       stream.getVideoTracks()[0].addEventListener('ended', () => {
         $('stopShare').click();
       });
@@ -202,6 +261,7 @@ function connectSocket() {
   socket.on('connect', () => {
     setStatus('Connected');
     socket.emit('join', { roomId: state.roomId, displayName: state.displayName });
+    updateControls();
   });
 
   socket.on('joined', async ({ participants }) => {
@@ -252,6 +312,7 @@ function connectSocket() {
 
   socket.on('disconnect', () => {
     setStatus('Disconnected');
+    updateControls();
   });
 }
 
@@ -260,4 +321,5 @@ function connectSocket() {
   try {
     await initLocalMedia();
   } catch {}
+  updateControls();
 })();

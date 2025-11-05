@@ -5,21 +5,76 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MiroTalk WebRTC MVP</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
-    header { padding: 12px 16px; background: #111827; border-bottom: 1px solid #1f2937; }
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-border: #1f2937;
+      --input-bg: #0b1220;
+      --text: #e2e8f0;
+      --muted: #9ca3af;
+      --primary: #1d4ed8;
+      --primary-600: #2563eb;
+      --secondary: #374151;
+      --secondary-600: #4b5563;
+      --danger: #b91c1c;
+      --danger-600: #dc2626;
+      --success: #059669;
+      --success-600: #10b981;
+      --warning: #f59e0b;
+    }
+
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
+    header { padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--panel-border); }
     main { display: grid; grid-template-columns: 320px 1fr; gap: 12px; padding: 12px; }
-    .panel { background: #111827; border: 1px solid #1f2937; border-radius: 8px; padding: 12px; }
-    label { display: block; font-size: 12px; color: #9ca3af; margin-top: 8px; }
-    input, button, textarea { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px; border-radius: 6px; border: 1px solid #374151; background: #0b1220; color: #e5e7eb; }
-    button { cursor: pointer; background: #1d4ed8; border-color: #1d4ed8; }
-    button.secondary { background: #374151; border-color: #4b5563; }
-    button.danger { background: #b91c1c; border-color: #b91c1c; }
+    .panel { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+    input, button, textarea {
+      width: 100%; box-sizing: border-box; margin-top: 4px; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid #374151; background: var(--input-bg); color: #e5e7eb;
+    }
+
+    button {
+      cursor: pointer; background: var(--primary); border-color: var(--primary);
+      transition: background-color .18s ease, border-color .18s ease, transform .06s ease, box-shadow .18s ease, opacity .2s ease;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 0 0 rgba(0,0,0,0);
+      user-select: none;
+    }
+    button:hover { background: var(--primary-600); border-color: var(--primary-600); }
+    button:active { transform: translateY(1px) scale(0.99); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; filter: grayscale(20%); }
+
+    /* Variants */
+    button.secondary { background: var(--secondary); border-color: var(--secondary-600); }
+    button.secondary:hover { background: var(--secondary-600); }
+
+    button.danger { background: var(--danger); border-color: var(--danger-600); }
+    button.danger:hover { background: var(--danger-600); }
+
+    /* State colors */
+    button.on { background: var(--success); border-color: var(--success-600); }
+    button.on:hover { background: var(--success-600); }
+
+    button.off { background: var(--secondary); border-color: var(--secondary-600); }
+    button.off:hover { background: var(--secondary-600); }
+
+    /* Attention/pulse (e.g., screen sharing active) */
+    .pulse {
+      animation: pulseGlow 1.5s ease-in-out infinite;
+      box-shadow: 0 0 0 0 rgba(16,185,129,0.6);
+    }
+    @keyframes pulseGlow {
+      0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.45); }
+      70% { box-shadow: 0 0 0 10px rgba(16,185,129,0); }
+      100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+    }
+
     .row { display: flex; gap: 8px; }
-    video { width: 100%; background: #0b1220; border-radius: 8px; }
+    video { width: 100%; background: var(--input-bg); border-radius: 8px; }
     .videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
-    .badge { display: inline-block; padding: 2px 6px; font-size: 12px; background: #374151; border-radius: 999px; }
+    .badge { display: inline-block; padding: 2px 6px; font-size: 12px; background: var(--secondary); border-radius: 999px; }
     .controls { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 8px; }
-    .chat { height: 200px; overflow: auto; background: #0b1220; padding: 8px; border-radius: 6px; }
+    .chat { height: 200px; overflow: auto; background: var(--input-bg); padding: 8px; border-radius: 6px; }
     .muted { opacity: 0.65; }
   </style>
 </head>
