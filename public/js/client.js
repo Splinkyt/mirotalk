@@ -6837,8 +6837,10 @@ async function toggleScreenSharing(init = false) {
         screenMaxFrameRate = parseInt(screenFpsSelect.value, 10);
 
         // Screen share constraints
+        // Always request system/computer audio during screen sharing
+        // Note: Browser UX controls whether system audio is actually captured (e.g., Chrome's "Share system audio").
         const constraints = {
-            audio: myAudioStatus ? false : true,
+            audio: true,
             video: { frameRate: screenMaxFrameRate },
         };
 
@@ -12155,10 +12157,11 @@ async function getCompositeScreenShareStream(constraints) {
     // Choose audio track: prefer mic; fallback to system audio (if provided)
     let chosenAudio = null;
     try {
-        if (useAudio && hasAudioTrack(localAudioMediaStream)) {
-            chosenAudio = localAudioMediaStream.getAudioTracks()[0];
-        } else if (hasAudioTrack(screenStream)) {
+        // Prefer system/screen audio if available; fallback to microphone
+        if (hasAudioTrack(screenStream)) {
             chosenAudio = screenStream.getAudioTracks()[0];
+        } else if (useAudio && hasAudioTrack(localAudioMediaStream)) {
+            chosenAudio = localAudioMediaStream.getAudioTracks()[0];
         }
     } catch {}
     if (chosenAudio) outStream.addTrack(chosenAudio);
