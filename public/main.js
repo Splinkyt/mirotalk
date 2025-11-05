@@ -33,6 +33,44 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
+// ---- Autoplay / Audio unlocking helpers ----
+let audioCtx = null;
+function unlockAudio() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  if (!audioCtx) audioCtx = new AC();
+  if (audioCtx.state === 'suspended') {
+    try { audioCtx.resume(); } catch {}
+  }
+}
+
+function showEnableAudioUI() {
+  const btn = document.getElementById('enableAudioBtn');
+  const hint = document.getElementById('enableAudioHint');
+  if (btn) btn.style.display = 'inline-flex';
+  if (hint) hint.style.display = 'inline';
+}
+
+function hideEnableAudioUI() {
+  const btn = document.getElementById('enableAudioBtn');
+  const hint = document.getElementById('enableAudioHint');
+  if (btn) btn.style.display = 'none';
+  if (hint) hint.style.display = 'none';
+}
+
+function resumeAllPlayback() {
+  const nodes = document.querySelectorAll('#remoteVideos video');
+  nodes.forEach((v) => {
+    try {
+      v.muted = false;
+      v.autoplay = true;
+      v.playsInline = true;
+      if (typeof v.play === 'function') v.play().catch(() => {});
+    } catch {}
+  });
+}
+// ---- End helpers ----
+
 function updateControls() {
   const joinBtn = $('joinBtn');
   const leaveBtn = $('leaveBtn');
@@ -157,7 +195,21 @@ function createPeerConnection(peerId) {
       peer.videoEl = videoEl;
     }
     const [stream] = ev.streams;
-    peer.videoEl.srcObject = stream;
+    const v = peer.videoEl;
+    v.srcObject = stream;
+    v.muted = false;
+    v.autoplay = true;
+    v.playsInline = true;
+
+    const tryPlay = () => v.play().then(() => {
+      hideEnableAudioUI();
+    }).catch((err) => {
+      console.warn('Autoplay blocked for remote media:', err);
+      showEnableAudioUI();
+    });
+
+    if (v.readyState >= 2) tryPlay();
+    else v.addEventListener('loadeddata', tryPlay, { once: true });
   };
 
   pc.onconnectionstatechange = () => {
@@ -378,6 +430,13 @@ function wireUI() {
         stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
       }
       state.screenStream = stream;
+      // Hint the sharer if no screen audio track was captured (common on desktop without enabling the toggle)
+      try {
+        const hasScreenAudio = !!(state.screenStream?.getAudioTracks?.().length);
+        if (!hasScreenAudio) {
+          appendChat({ from: 'system', message: 'No screen audio captured. In Chrome/Edge share a Tab and enable “Share tab audio”. On Windows Entire screen, enable “Share system audio”. On macOS only Tab audio works.', ts: Date.now() });
+        }
+      } catch {}
       addScreenTracksToAll();
       state.socket?.emit('screen-share', { roomId: state.roomId, action: 'start' });
       // Mark ourselves as the current sharer locally as well
@@ -390,6 +449,22 @@ function wireUI() {
       console.warn('Share screen cancelled or failed', e);
     }
   };
+
+  const enableBtn = document.getElementById('enableAudioBtn');
+  if (enableBtn) {
+    enableBtn.onclick = () => {
+      unlockAudio();
+      resumeAllPlayback();
+      hideEnableAudioUI();
+    };
+  }
+
+  // As a safety net, a one-time global click to unlock audio and resume playback
+  document.addEventListener('click', () => {
+    unlockAudio();
+    resumeAllPlayback();
+    hideEnableAudioUI();
+  }, { once: true });
 
   $('stopShare').onclick = () => {
     // Switch outgoing video back to camera before stopping the screen stream
