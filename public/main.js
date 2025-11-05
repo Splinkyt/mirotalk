@@ -125,6 +125,16 @@ function createPeerConnection(peerId) {
       }
     }
   }
+  // If we're sharing and have a screen audio track, attach it so late joiners hear it
+  let screenAudioSender = null;
+  const screenAudio = getScreenAudioTrack?.() || null;
+  if (state.screenStream && screenAudio) {
+    try {
+      screenAudioSender = pc.addTrack(screenAudio, state.localStream);
+    } catch (e) {
+      console.warn('addTrack(screen audio) on new PC failed', e);
+    }
+  }
 
   pc.onicecandidate = (ev) => {
     if (ev.candidate) {
@@ -135,7 +145,7 @@ function createPeerConnection(peerId) {
   pc.ontrack = (ev) => {
     let peer = state.peers.get(peerId);
     if (!peer) {
-      peer = { pc, streams: {}, videoEl: null };
+      peer = { pc, streams: {}, videoEl: null, screenAudioSender: null };
       state.peers.set(peerId, peer);
     }
     if (!peer.videoEl) {
@@ -157,7 +167,9 @@ function createPeerConnection(peerId) {
     }
   };
 
-  state.peers.set(peerId, { pc, streams: {}, videoEl: null });
+  state.peers.set(peerId, { pc, streams: {}, videoEl: null, screenAudioSender: null });
+  const p = state.peers.get(peerId);
+  if (screenAudioSender && p) p.screenAudioSender = screenAudioSender;
   return pc;
 }
 
@@ -205,6 +217,38 @@ function replaceVideoTrackForAll(newVideoTrack) {
   }
 }
 
+function getScreenAudioTrack() {
+  return state.screenStream?.getAudioTracks?.()[0] || null;
+}
+
+function addScreenAudioToAll() {
+  const audio = getScreenAudioTrack();
+  if (!audio) return;
+  for (const [, peer] of state.peers.entries()) {
+    if (peer.screenAudioSender && peer.pc.getSenders().includes(peer.screenAudioSender)) continue;
+    try {
+      // Attach using the same stream reference to keep MSID consistent with the camera stream.
+      const sender = peer.pc.addTrack(audio, state.localStream);
+      peer.screenAudioSender = sender;
+    } catch (e) {
+      console.warn('addTrack(screen audio) failed', e);
+    }
+  }
+}
+
+function removeScreenAudioFromAll() {
+  for (const [, peer] of state.peers.entries()) {
+    const sender = peer.screenAudioSender;
+    if (!sender) continue;
+    try {
+      peer.pc.removeTrack(sender);
+    } catch (e) {
+      console.warn('removeTrack(screen audio) failed', e);
+    }
+    peer.screenAudioSender = null;
+  }
+}
+
 function addScreenTracksToAll() {
   // Replace current outbound video with screen video (no extra transceivers). Keep mic as-is.
   if (!state.screenStream) return;
@@ -214,6 +258,8 @@ function addScreenTracksToAll() {
     try { screenVideo.contentHint = 'detail'; } catch {}
     replaceVideoTrackForAll(screenVideo);
   }
+  // Also attach screen audio if available
+  addScreenAudioToAll();
 }
 
 function stopScreenTracks() {
@@ -357,6 +403,9 @@ function wireUI() {
         try { sender.replaceTrack(camTrack); } catch (e) { console.warn('replaceTrack(cam) failed', e); }
       }
     }
+
+    // Detach any screen audio sender before stopping tracks
+    removeScreenAudioFromAll();
 
     // Now stop the screen tracks and notify others
     stopScreenTracks();
