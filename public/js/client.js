@@ -6855,7 +6855,7 @@ async function toggleScreenSharing(init = false) {
         // Get screen or webcam media stream based on current state
         const screenMediaPromise = isScreenStreaming
             ? await navigator.mediaDevices.getUserMedia(await getAudioVideoConstraints())
-            : await navigator.mediaDevices.getDisplayMedia(constraints);
+            : await getCompositeScreenShareStream(constraints);
 
         if (screenMediaPromise) {
             isVideoPrivacyActive = false;
@@ -6868,6 +6868,8 @@ async function toggleScreenSharing(init = false) {
                 setMyVideoStatusTrue();
                 emitPeersAction('screenStart');
             } else {
+                // Stopping screen share: stop compositor if active
+                try { if (typeof stopCompositeShare === 'function') stopCompositeShare(); } catch {}
                 emitPeersAction('screenStop');
                 adaptAspectRatio();
                 // Reset zoom
@@ -12051,4 +12053,281 @@ function handleClickOutside(targetElement, triggerElement, callback, minWidth = 
  */
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+
+// ===== Composited Screen Share (Screen + Camera overlay) =====
+// Lightweight compositor to bake local camera into the shared screen stream
+let compositeShare = {
+    canvas: null,
+    ctx: null,
+    rafId: null,
+    screenVideo: null,
+    camVideo: null,
+    screenStream: null,
+    camStream: null,
+    outStream: null,
+    overlay: { x: 0.72, y: 0.72, w: 0.25, h: null }, // fractions of canvas (top-left origin)
+    ui: { container: null, video: null },
+    usingExistingCam: false,
+};
+
+async function getCompositeScreenShareStream(constraints) {
+    // constraints: { audio: boolean, video: { frameRate } }
+    // Acquire screen
+    const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: !!constraints?.audio,
+    });
+
+    // Use existing cam stream if available; otherwise acquire a new one
+    let usingExistingCam = false;
+    let camStream = null;
+    if (useVideo && hasVideoTrack(localVideoMediaStream)) {
+        camStream = localVideoMediaStream;
+        usingExistingCam = true;
+    } else {
+        camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    }
+
+    // Prepare hidden video elements
+    const screenVideo = document.createElement('video');
+    screenVideo.playsInline = true;
+    screenVideo.muted = true;
+    screenVideo.srcObject = screenStream;
+
+    const camVideo = document.createElement('video');
+    camVideo.playsInline = true;
+    camVideo.muted = true;
+    camVideo.srcObject = camStream;
+
+    await Promise.all([
+        new Promise((res) => (screenVideo.onloadedmetadata = () => { screenVideo.play().then(res).catch(res); })),
+        new Promise((res) => (camVideo.onloadedmetadata = () => { camVideo.play().then(res).catch(res); })),
+    ]);
+
+    // Canvas sized to screen video
+    const W = screenVideo.videoWidth || 1280;
+    const H = screenVideo.videoHeight || 720;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+
+    // Compute overlay height preserving cam aspect ratio
+    const overlay = { ...compositeShare.overlay };
+    const camAR = (camVideo.videoHeight || 720) / (camVideo.videoWidth || 1280);
+    overlay.h = overlay.w * camAR;
+
+    // Draw loop
+    let running = true;
+    const draw = () => {
+        if (!running) return;
+        // Draw screen
+        ctx.drawImage(screenVideo, 0, 0, W, H);
+        // Draw camera overlay
+        try {
+            const dx = Math.max(0, Math.min(W - W * overlay.w, overlay.x * W));
+            const dy = Math.max(0, Math.min(H - H * overlay.h, overlay.y * H));
+            const dw = W * overlay.w;
+            const dh = H * overlay.h;
+            ctx.save();
+            ctx.beginPath();
+            // Rounded rect mask
+            const r = Math.min(dw, dh) * 0.06;
+            roundedRect(ctx, dx, dy, dw, dh, r);
+            ctx.clip();
+            ctx.drawImage(camVideo, dx, dy, dw, dh);
+            ctx.restore();
+        } catch (e) {
+            // ignore sporadic draw errors (switching tabs, etc.)
+        }
+        compositeShare.rafId = requestAnimationFrame(draw);
+    };
+
+    // Start
+    draw();
+
+    // Capture canvas stream
+    const fps = (constraints?.video?.frameRate) || 30;
+    const outStream = canvas.captureStream(fps);
+
+    // Choose audio track: prefer mic; fallback to system audio (if provided)
+    let chosenAudio = null;
+    try {
+        if (useAudio && hasAudioTrack(localAudioMediaStream)) {
+            chosenAudio = localAudioMediaStream.getAudioTracks()[0];
+        } else if (hasAudioTrack(screenStream)) {
+            chosenAudio = screenStream.getAudioTracks()[0];
+        }
+    } catch {}
+    if (chosenAudio) outStream.addTrack(chosenAudio);
+
+    // Hook underlying screen onended to stop compositing and revert
+    const screenVideoTrack = screenStream.getVideoTracks()[0];
+    if (screenVideoTrack) {
+        screenVideoTrack.onended = () => {
+            stopCompositeShare();
+            // This mimics native behavior: revert to camera
+            toggleScreenSharing();
+        };
+    }
+
+    // Expose draggable overlay UI on host side
+    try {
+        ensureCompositeOverlayUI(camStream);
+        // Sync overlay position from UI element on every 200ms
+        const sync = () => {
+            updateOverlayFromUI(overlay, W, H);
+            compositeShare.syncTimer = setTimeout(sync, 200);
+        };
+        sync();
+    } catch (e) {
+        console.warn('Overlay UI error', e);
+    }
+
+    // Save state for cleanup
+    compositeShare = {
+        canvas,
+        ctx,
+        rafId: compositeShare.rafId,
+        screenVideo,
+        camVideo,
+        screenStream,
+        camStream,
+        outStream,
+        overlay,
+        ui: compositeShare.ui,
+        usingExistingCam,
+    };
+
+    return outStream;
+}
+
+function stopCompositeShare() {
+    try {
+        if (compositeShare.rafId) cancelAnimationFrame(compositeShare.rafId);
+    } catch {}
+    // Stop only created cam stream; keep existing local cam
+    if (compositeShare.camStream && !compositeShare.usingExistingCam) {
+        compositeShare.camStream.getTracks().forEach((t) => t.stop());
+    }
+    if (compositeShare.screenStream) {
+        compositeShare.screenStream.getTracks().forEach((t) => t.stop());
+    }
+    if (compositeShare.outStream) {
+        compositeShare.outStream.getTracks().forEach((t) => t.stop());
+    }
+    removeCompositeOverlayUI();
+    compositeShare = { canvas: null, ctx: null, rafId: null, screenVideo: null, camVideo: null, screenStream: null, camStream: null, outStream: null, overlay: { x: 0.72, y: 0.72, w: 0.25, h: null }, ui: { container: null, video: null }, usingExistingCam: false };
+}
+
+function ensureCompositeOverlayUI(camStream) {
+    // Create a draggable preview to control overlay position
+    if (compositeShare.ui.container) return;
+    const container = document.createElement('div');
+    container.id = 'screenCamOverlay';
+    container.style.position = 'fixed';
+    container.style.zIndex = 9999;
+    container.style.right = '2%';
+    container.style.bottom = '2%';
+    container.style.width = '20vw';
+    container.style.maxWidth = '360px';
+    container.style.aspectRatio = '16 / 9';
+    container.style.background = 'rgba(0,0,0,0.2)';
+    container.style.backdropFilter = 'blur(1px)';
+    container.style.borderRadius = '10px';
+    container.style.cursor = 'move';
+    container.style.overflow = 'hidden';
+    container.title = 'Drag to move your camera overlay in the screen share';
+
+    const vid = document.createElement('video');
+    vid.playsInline = true;
+    vid.muted = true;
+    vid.autoplay = true;
+    vid.srcObject = camStream;
+    vid.style.width = '100%';
+    vid.style.height = '100%';
+    vid.style.objectFit = 'cover';
+
+    container.appendChild(vid);
+    document.body.appendChild(container);
+
+    // Make draggable using existing helper if available
+    try {
+        if (typeof dragElement === 'function') {
+            dragElement(container, container);
+        } else {
+            // Fallback simple drag
+            simpleDrag(container);
+        }
+    } catch {
+        simpleDrag(container);
+    }
+
+    compositeShare.ui = { container, video: vid };
+}
+
+function removeCompositeOverlayUI() {
+    if (compositeShare.syncTimer) {
+        clearTimeout(compositeShare.syncTimer);
+        compositeShare.syncTimer = null;
+    }
+    if (compositeShare.ui?.container && compositeShare.ui.container.parentNode) {
+        compositeShare.ui.container.parentNode.removeChild(compositeShare.ui.container);
+    }
+    compositeShare.ui = { container: null, video: null };
+}
+
+function updateOverlayFromUI(overlay, canvasW, canvasH) {
+    const el = compositeShare.ui.container;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const vx = window.innerWidth;
+    const vy = window.innerHeight;
+    // Convert viewport position to canvas fractions
+    const cx = rect.left / vx;
+    const cy = rect.top / vy;
+    const cw = rect.width / vx;
+    const ch = rect.height / vy;
+    overlay.x = Math.max(0, Math.min(1 - cw, cx));
+    overlay.y = Math.max(0, Math.min(1 - ch, cy));
+    overlay.w = Math.max(0.1, Math.min(0.5, cw));
+    overlay.h = Math.max(0.1, Math.min(0.5, ch));
+}
+
+function simpleDrag(el) {
+    let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+    el.onmousedown = dragMouseDown;
+    function dragMouseDown(e) {
+        e = e || window.event;
+        e.preventDefault();
+        pos3 = e.clientX;
+        pos4 = e.clientY;
+        document.onmouseup = closeDragElement;
+        document.onmousemove = elementDrag;
+    }
+    function elementDrag(e) {
+        e = e || window.event;
+        e.preventDefault();
+        pos1 = pos3 - e.clientX;
+        pos2 = pos4 - e.clientY;
+        pos3 = e.clientX;
+        pos4 = e.clientY;
+        el.style.top = el.offsetTop - pos2 + 'px';
+        el.style.left = el.offsetLeft - pos1 + 'px';
+    }
+    function closeDragElement() {
+        document.onmouseup = null;
+        document.onmousemove = null;
+    }
+}
+
+function roundedRect(ctx, x, y, width, height, radius) {
+    ctx.moveTo(x + radius, y);
+    ctx.arcTo(x + width, y, x + width, y + height, radius);
+    ctx.arcTo(x + width, y + height, x, y + height, radius);
+    ctx.arcTo(x, y + height, x, y, radius);
+    ctx.arcTo(x, y, x + width, y, radius);
+    ctx.closePath();
 }
