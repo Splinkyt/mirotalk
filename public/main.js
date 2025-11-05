@@ -65,13 +65,16 @@ function createPeerConnection(peerId) {
   pc.ontrack = (ev) => {
     let peer = state.peers.get(peerId);
     if (!peer) {
+      peer = { pc, streams: {}, videoEl: null };
+      state.peers.set(peerId, peer);
+    }
+    if (!peer.videoEl) {
       const videoEl = document.createElement('video');
       videoEl.autoplay = true;
       videoEl.playsInline = true;
       videoEl.id = `remote-${peerId}`;
       remoteVideos.appendChild(videoEl);
-      peer = { pc, streams: {}, videoEl };
-      state.peers.set(peerId, peer);
+      peer.videoEl = videoEl;
     }
     const [stream] = ev.streams;
     peer.videoEl.srcObject = stream;
@@ -203,11 +206,7 @@ function connectSocket() {
 
   socket.on('joined', async ({ participants }) => {
     log('joined', participants);
-    // Create offers to existing peers
-    for (const p of participants) {
-      if (p.id === socket.id) continue;
-      await callPeer(p.id);
-    }
+    // MVP anti-glare: do NOT initiate offers here. Existing participants will call us on 'participant-joined'.
   });
 
   socket.on('participant-joined', async ({ id, displayName }) => {
@@ -227,6 +226,11 @@ function connectSocket() {
   socket.on('answer', async ({ from, sdp }) => {
     const pc = state.peers.get(from)?.pc;
     if (!pc) return;
+    // Guard against glare: only set remote answer if we are in have-local-offer state
+    if (pc.signalingState !== 'have-local-offer') {
+      console.warn('Ignoring answer: unexpected signalingState', pc.signalingState);
+      return;
+    }
     await pc.setRemoteDescription({ type: 'answer', sdp });
   });
 
