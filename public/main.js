@@ -115,8 +115,15 @@ function createPeerConnection(peerId) {
   if (state.localStream) {
     state.localStream.getTracks().forEach((t) => pc.addTrack(t, state.localStream));
   }
+  // If we are currently sharing, immediately switch the outbound video to the screen track
   if (state.screenStream) {
-    state.screenStream.getTracks().forEach((t) => pc.addTrack(t, state.screenStream));
+    const screenVideo = state.screenStream.getVideoTracks?.()[0];
+    if (screenVideo) {
+      const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+      if (sender) {
+        try { sender.replaceTrack(screenVideo); } catch (e) { console.warn('replaceTrack(screen) failed', e); }
+      }
+    }
   }
 
   pc.onicecandidate = (ev) => {
@@ -184,13 +191,28 @@ function addLocalTracksToAll() {
   }
 }
 
-function addScreenTracksToAll() {
+function replaceVideoTrackForAll(newVideoTrack) {
+  if (!newVideoTrack) return;
   for (const [, peer] of state.peers.entries()) {
-    if (state.screenStream) {
-      for (const track of state.screenStream.getTracks()) {
-        peer.pc.addTrack(track, state.screenStream);
+    const sender = peer.pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+    if (sender) {
+      try {
+        sender.replaceTrack(newVideoTrack);
+      } catch (e) {
+        console.warn('replaceTrack failed', e);
       }
     }
+  }
+}
+
+function addScreenTracksToAll() {
+  // Replace current outbound video with screen video (no extra transceivers). Keep mic as-is.
+  if (!state.screenStream) return;
+  const screenVideo = state.screenStream.getVideoTracks?.()[0];
+  if (screenVideo) {
+    // Hint: screen content benefits from "detail" hint for clarity.
+    try { screenVideo.contentHint = 'detail'; } catch {}
+    replaceVideoTrackForAll(screenVideo);
   }
 }
 
@@ -324,6 +346,19 @@ function wireUI() {
   };
 
   $('stopShare').onclick = () => {
+    // Switch outgoing video back to camera before stopping the screen stream
+    const camTrack = state.localStream?.getVideoTracks?.()[0] || null;
+    if (camTrack) {
+      try { camTrack.contentHint = 'motion'; } catch {}
+    }
+    for (const [, peer] of state.peers.entries()) {
+      const sender = peer.pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+      if (sender) {
+        try { sender.replaceTrack(camTrack); } catch (e) { console.warn('replaceTrack(cam) failed', e); }
+      }
+    }
+
+    // Now stop the screen tracks and notify others
     stopScreenTracks();
     state.socket?.emit('screen-share', { roomId: state.roomId, action: 'stop' });
     if (state.sharedPeerId === state.socket?.id) state.sharedPeerId = null;
