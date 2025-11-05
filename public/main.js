@@ -39,6 +39,7 @@ function updateControls() {
   const toggleMic = $('toggleMic');
   const shareScreen = $('shareScreen');
   const stopShare = $('stopShare');
+  const fullscreenShare = $('fullscreenShare');
   const sendChat = $('sendChat');
 
   const connected = !!state.socket && !!state.socket.connected;
@@ -47,6 +48,7 @@ function updateControls() {
   const camEnabled = !!camTrack && camTrack.enabled !== false;
   const micEnabled = !!micTrack && micTrack.enabled !== false;
   const sharing = !!state.screenStream;
+  const isFs = !!document.fullscreenElement;
 
   // Join/Leave
   if (joinBtn) joinBtn.disabled = connected;
@@ -81,6 +83,13 @@ function updateControls() {
     stopShare.disabled = !sharing;
     stopShare.classList.toggle('pulse', sharing);
     stopShare.textContent = sharing ? 'Sharing… Stop' : 'Stop Share';
+  }
+
+  // Fullscreen button
+  if (fullscreenShare) {
+    const anyVideo = sharing || remoteVideos.childElementCount > 0 || !!localVideo.srcObject;
+    fullscreenShare.disabled = !anyVideo;
+    fullscreenShare.textContent = isFs ? 'Exit Fullscreen' : 'Fullscreen';
   }
 }
 
@@ -191,6 +200,45 @@ function stopScreenTracks() {
   updateControls();
 }
 
+function isFullscreen() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+async function enterFullscreen(elem) {
+  try {
+    if (elem.requestFullscreen) {
+      await elem.requestFullscreen();
+    } else if (elem.webkitRequestFullscreen) {
+      elem.webkitRequestFullscreen();
+    }
+  } catch (e) {
+    console.warn('enterFullscreen failed', e);
+  }
+}
+
+async function exitFullscreen() {
+  try {
+    if (document.exitFullscreen) {
+      await document.exitFullscreen();
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+  } catch (e) {
+    console.warn('exitFullscreen failed', e);
+  }
+}
+
+function toggleFullscreen() {
+  if (isFullscreen()) {
+    exitFullscreen();
+  } else {
+    const target = document.querySelector('main') || document.documentElement;
+    enterFullscreen(target);
+  }
+  // Defer UI update until after the state changes
+  setTimeout(updateControls, 0);
+}
+
 function wireUI() {
   $('joinBtn').onclick = async () => {
     state.displayName = $('displayName').value || 'Guest';
@@ -262,6 +310,12 @@ function wireUI() {
     stopScreenTracks();
     state.socket?.emit('screen-share', { roomId: state.roomId, action: 'stop' });
   };
+
+  const fsBtn = $('fullscreenShare');
+  if (fsBtn) fsBtn.onclick = toggleFullscreen;
+
+  // Update UI when fullscreen state changes (Esc or programmatically)
+  document.addEventListener('fullscreenchange', updateControls);
 }
 
 function connectSocket() {
