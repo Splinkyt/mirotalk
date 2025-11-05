@@ -234,7 +234,18 @@ function wireUI() {
 
   $('shareScreen').onclick = async () => {
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      // Request screen with audio; browsers typically only provide system/tab audio for tab capture
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: true
+        });
+      } catch (err) {
+        // Fallback: if audio capture is not permitted/supported, retry without audio
+        console.warn('getDisplayMedia with audio failed, retrying video-only', err);
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      }
       state.screenStream = stream;
       addScreenTracksToAll();
       state.socket?.emit('screen-share', { roomId: state.roomId, action: 'start' });
