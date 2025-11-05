@@ -193,7 +193,7 @@ function wireUI() {
 
 function connectSocket() {
   if (state.socket) state.socket.disconnect();
-  const socket = io();
+  const socket = window.io();
   state.socket = socket;
 
   socket.on('connect', () => {
