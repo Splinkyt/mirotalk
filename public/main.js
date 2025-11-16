@@ -135,9 +135,23 @@ function updateControls() {
 async function initLocalMedia() {
   if (state.localStream) return state.localStream;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
     state.localStream = stream;
     localVideo.srcObject = stream;
+    // Provide processing hints to the browser
+    try {
+      const mic = stream.getAudioTracks?.()[0];
+      if (mic && 'contentHint' in mic) mic.contentHint = 'speech';
+      const cam = stream.getVideoTracks?.()[0];
+      if (cam && 'contentHint' in cam) cam.contentHint = 'motion';
+    } catch {}
     updateControls();
     return stream;
   } catch (e) {
@@ -168,6 +182,7 @@ function createPeerConnection(peerId) {
   const screenAudio = getScreenAudioTrack?.() || null;
   if (state.screenStream && screenAudio) {
     try {
+      try { if ('contentHint' in screenAudio) screenAudio.contentHint = 'music'; } catch {}
       screenAudioSender = pc.addTrack(screenAudio, state.localStream);
     } catch (e) {
       console.warn('addTrack(screen audio) on new PC failed', e);
@@ -293,6 +308,7 @@ function getScreenAudioTrack() {
 function addScreenAudioToAll() {
   const audio = getScreenAudioTrack();
   if (!audio) return;
+  try { if ('contentHint' in audio) audio.contentHint = 'music'; } catch {}
   for (const [, peer] of state.peers.entries()) {
     if (peer.screenAudioSender && peer.pc.getSenders().includes(peer.screenAudioSender)) continue;
     try {
