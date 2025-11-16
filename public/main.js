@@ -180,6 +180,23 @@ function createPeerConnection(peerId) {
     }
   };
 
+  pc.onnegotiationneeded = async () => {
+    const peer = state.peers.get(peerId);
+    if (!peer) return;
+    // Only negotiate from a stable state to avoid glare/double-offers
+    if (pc.signalingState !== 'stable') return;
+    try {
+      peer.makingOffer = true;
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      state.socket.emit('offer', { to: peerId, sdp: offer.sdp });
+    } catch (e) {
+      console.warn('negotiationneeded offer failed', e);
+    } finally {
+      peer.makingOffer = false;
+    }
+  };
+
   pc.ontrack = (ev) => {
     let peer = state.peers.get(peerId);
     if (!peer) {
