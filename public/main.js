@@ -163,18 +163,24 @@ async function initLocalMedia() {
 function createPeerConnection(peerId) {
   const pc = new RTCPeerConnection({ iceServers: state.iceServers });
 
-  // Add local tracks
+  // Add local tracks in a deterministic order to keep m-line ordering stable
+  let audioSender = null;
+  let videoSender = null;
   if (state.localStream) {
-    state.localStream.getTracks().forEach((t) => pc.addTrack(t, state.localStream));
+    const audios = state.localStream.getAudioTracks ? state.localStream.getAudioTracks() : [];
+    const videos = state.localStream.getVideoTracks ? state.localStream.getVideoTracks() : [];
+    if (audios[0]) {
+      audioSender = pc.addTrack(audios[0], state.localStream);
+    }
+    if (videos[0]) {
+      videoSender = pc.addTrack(videos[0], state.localStream);
+    }
   }
   // If we are currently sharing, immediately switch the outbound video to the screen track
   if (state.screenStream) {
     const screenVideo = state.screenStream.getVideoTracks?.()[0];
-    if (screenVideo) {
-      const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
-      if (sender) {
-        try { sender.replaceTrack(screenVideo); } catch (e) { console.warn('replaceTrack(screen) failed', e); }
-      }
+    if (screenVideo && videoSender) {
+      try { videoSender.replaceTrack(screenVideo); } catch (e) { console.warn('replaceTrack(screen) failed', e); }
     }
   }
   // If we're sharing and have a screen audio track, attach it so late joiners hear it
@@ -251,7 +257,8 @@ function createPeerConnection(peerId) {
     }
   };
 
-  state.peers.set(peerId, { pc, streams: {}, videoEl: null, screenAudioSender: null });
+  const polite = (state.socket?.id || '') < peerId;
+  state.peers.set(peerId, { pc, streams: {}, videoEl: null, screenAudioSender: null, makingOffer: false, ignoreOffer: false, isSettingRemoteAnswerPending: false, polite });
   const p = state.peers.get(peerId);
   if (screenAudioSender && p) p.screenAudioSender = screenAudioSender;
   return pc;
@@ -268,18 +275,36 @@ function removePeer(peerId) {
 
 async function callPeer(peerId) {
   const pc = state.peers.get(peerId)?.pc || createPeerConnection(peerId);
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  state.socket.emit('offer', { to: peerId, sdp: offer.sdp });
+  const peer = state.peers.get(peerId);
+  if (!peer) return;
+  if (pc.signalingState !== 'stable') return; // avoid glare
+  try {
+    peer.makingOffer = true;
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    state.socket.emit('offer', { to: peerId, sdp: offer.sdp });
+  } catch (e) {
+    console.warn('callPeer offer failed', e);
+  } finally {
+    peer.makingOffer = false;
+  }
 }
 
 function addLocalTracksToAll() {
   for (const [peerId, peer] of state.peers.entries()) {
     const senders = peer.pc.getSenders();
     if (state.localStream) {
-      for (const track of state.localStream.getTracks()) {
-        const kind = track.kind;
-        const sender = senders.find((s) => s.track && s.track.kind === kind);
+      const audios = state.localStream.getAudioTracks ? state.localStream.getAudioTracks() : [];
+      const videos = state.localStream.getVideoTracks ? state.localStream.getVideoTracks() : [];
+      // Audio first
+      for (const track of audios) {
+        const sender = senders.find((s) => s.track && s.track.kind === 'audio');
+        if (sender) sender.replaceTrack(track);
+        else peer.pc.addTrack(track, state.localStream);
+      }
+      // Then video
+      for (const track of videos) {
+        const sender = senders.find((s) => s.track && s.track.kind === 'video');
         if (sender) sender.replaceTrack(track);
         else peer.pc.addTrack(track, state.localStream);
       }
@@ -553,10 +578,26 @@ function connectSocket() {
 
   socket.on('offer', async ({ from, sdp }) => {
     const pc = state.peers.get(from)?.pc || createPeerConnection(from);
-    await pc.setRemoteDescription({ type: 'offer', sdp });
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    state.socket.emit('answer', { to: from, sdp: answer.sdp });
+    const peer = state.peers.get(from);
+    if (!peer) return;
+    const offer = { type: 'offer', sdp };
+    const offerCollision = peer.makingOffer || pc.signalingState !== 'stable';
+    const ignore = !peer.polite && offerCollision;
+    if (ignore) {
+      console.warn('[signaling] Ignoring offer due to collision');
+      return;
+    }
+    try {
+      if (offerCollision) {
+        try { await pc.setLocalDescription({ type: 'rollback' }); } catch (e) { console.warn('rollback failed (safe to ignore)', e); }
+      }
+      await pc.setRemoteDescription(offer);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      state.socket.emit('answer', { to: from, sdp: answer.sdp });
+    } catch (e) {
+      console.warn('Error handling remote offer', e);
+    }
   });
 
   socket.on('answer', async ({ from, sdp }) => {
