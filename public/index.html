@@ -130,9 +130,42 @@
     video { width: 100%; background: var(--input-bg); border-radius: var(--radius); }
     .videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
     .badge { display: inline-block; padding: 2px 6px; font-size: 12px; background: var(--secondary); border-radius: 999px; }
-    .controls { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 8px; }
+    .controls { display: none; }
     .chat { height: 200px; overflow: auto; background: var(--input-bg); padding: 8px; border-radius: 6px; }
     .muted { opacity: 0.65; }
+
+    /* Video tile with per-tile fullscreen button */
+    .video-tile { position: relative; border-radius: var(--radius); overflow: hidden; background: var(--input-bg); }
+    .video-tile video { display: block; border-radius: 0; }
+    .tile-fs {
+      position: absolute; right: 8px; bottom: 8px; width: 36px; height: 36px;
+      border-radius: 10px; background: var(--secondary); border-color: var(--secondary-600);
+      display: inline-flex; align-items: center; justify-content: center; padding: 0; min-height: 36px; width: 36px;
+    }
+    .tile-fs:hover { background: var(--secondary-600); }
+
+    /* Bottom, full-width call toolbar */
+    .call-toolbar-wrap {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+      padding: 12px max(12px, env(safe-area-inset-left)) calc(12px + var(--safe-bottom)) max(12px, env(safe-area-inset-right));
+      pointer-events: none;
+    }
+    .call-toolbar {
+      max-width: 960px; margin: 0 auto; pointer-events: auto;
+      background: var(--panel); border: 1px solid var(--panel-border); border-radius: calc(var(--radius) + 8px);
+      padding: 10px; display: flex; gap: 12px; justify-content: center;
+      backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
+    }
+    .btn-icon {
+      width: 56px; height: 56px; border-radius: 16px; display: inline-flex; align-items: center; justify-content: center; padding: 0;
+    }
+    .btn-icon svg { width: 26px; height: 26px; }
+    /* icon state toggling */
+    .btn-icon .icon { display: none; }
+    .btn-icon.on .icon.on, .btn-icon.off .icon.off { display: inline; }
+    #shareToggle .icon.share { display: inline; }
+    #shareToggle.is-sharing .icon.share { display: none; }
+    #shareToggle.is-sharing .icon.stop { display: inline; }
 
     /* Reduced motion support */
     @media (prefers-reduced-motion: reduce) {
@@ -174,13 +207,26 @@
       <div class="row">
         <div style="flex:1;">
           <label>Local</label>
-          <video id="localVideo" autoplay playsinline muted aria-label="Local video preview"></video>
-          <div class="controls">
-            <button id="toggleCam" aria-pressed="false">Toggle Cam</button>
-            <button id="toggleMic" aria-pressed="false">Toggle Mic</button>
+          <div class="video-tile" id="localTile">
+            <video id="localVideo" autoplay playsinline muted aria-label="Local video preview"></video>
+            <button class="tile-fs" id="localFsBtn" aria-label="Fullscreen" title="Fullscreen">
+              <!-- Fullscreen icon -->
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 3H5a2 2 0 0 0-2 2v4"></path>
+                <polyline points="9 3 9 9 3 9"></polyline>
+                <path d="M15 21h4a2 2 0 0 0 2-2v-4"></path>
+                <polyline points="15 21 15 15 21 15"></polyline>
+                <path d="M21 9V5a2 2 0 0 0-2-2h-4"></path>
+                <polyline points="15 9 21 9 21 3"></polyline>
+                <path d="M3 15v4a2 2 0 0 0 2 2h4"></path>
+                <polyline points="3 15 9 15 9 21"></polyline>
+              </svg>
+            </button>
+          </div>
+          <!-- Hidden legacy share controls kept for logic reuse -->
+          <div style="display:none;">
             <button id="shareScreen">Share Screen</button>
-            <button id="stopShare" class="secondary">Stop Share</button>
-            <button id="fullscreenShare" class="secondary">Fullscreen</button>
+            <button id="stopShare">Stop Share</button>
           </div>
         </div>
       </div>
@@ -192,6 +238,60 @@
       <div id="remoteVideos" class="videos" role="region" aria-labelledby="remotesLabel"></div>
     </section>
   </main>
+
+  <!-- Bottom toolbar (full-width) -->
+  <div class="call-toolbar-wrap" role="group" aria-label="Call controls">
+    <div class="call-toolbar">
+      <button id="toggleCam" class="btn-icon off" aria-pressed="false" aria-label="Toggle camera" title="Toggle camera">
+        <!-- camera on -->
+        <svg class="icon on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15V9a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2z"></path>
+          <polygon points="16 12 22 15 22 9 16 12"></polygon>
+        </svg>
+        <!-- camera off -->
+        <svg class="icon off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1 1l22 22"></path>
+          <path d="M16 12l5 3V9l-5 3z"></path>
+          <path d="M7 7h9a2 2 0 0 1 2 2v6"></path>
+          <path d="M3 3h2a2 2 0 0 1 2 2v9"></path>
+          <rect x="3" y="9" width="10" height="8" rx="2"></rect>
+        </svg>
+      </button>
+
+      <button id="toggleMic" class="btn-icon off" aria-pressed="false" aria-label="Toggle microphone" title="Toggle microphone">
+        <!-- mic on -->
+        <svg class="icon on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 1a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V4a3 3 0 0 1 3-3z"></path>
+          <path d="M19 10a7 7 0 0 1-14 0"></path>
+          <line x1="12" y1="17" x2="12" y2="23"></line>
+          <line x1="8" y1="23" x2="16" y2="23"></line>
+        </svg>
+        <!-- mic off -->
+        <svg class="icon off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="1" y1="1" x2="23" y2="23"></line>
+          <path d="M15 11V4a3 3 0 0 0-6 0v3"></path>
+          <path d="M9 10v1a3 3 0 0 0 5.12 2.12"></path>
+          <path d="M19 10a7 7 0 0 1-14 0"></path>
+          <line x1="12" y1="17" x2="12" y2="23"></line>
+          <line x1="8" y1="23" x2="16" y2="23"></line>
+        </svg>
+      </button>
+
+      <button id="shareToggle" class="btn-icon" aria-label="Share screen" title="Share screen">
+        <!-- share icon -->
+        <svg class="icon share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="14" rx="2"></rect>
+          <path d="M12 8v6"></path>
+          <path d="M9 11l3-3 3 3"></path>
+        </svg>
+        <!-- stop share icon -->
+        <svg class="icon stop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none;">
+          <rect x="3" y="4" width="18" height="14" rx="2"></rect>
+          <rect x="9" y="9" width="6" height="6"></rect>
+        </svg>
+      </button>
+    </div>
+  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/app/main.js" type="module"></script>

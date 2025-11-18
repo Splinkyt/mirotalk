@@ -79,16 +79,46 @@ export function createPeerConnection(peerId) {
   pc.ontrack = (ev) => {
     let peer = state.peers.get(peerId);
     if (!peer) {
-      peer = { pc, videoEl: null, screenAudioSender: null };
+      peer = { pc, videoEl: null, containerEl: null, screenAudioSender: null };
       state.peers.set(peerId, peer);
     }
     if (!peer.videoEl) {
+      // Create a tile wrapper with a per-tile fullscreen button
+      const wrapper = document.createElement('div');
+      wrapper.className = 'video-tile';
+
       const videoEl = document.createElement('video');
       videoEl.autoplay = true;
       videoEl.playsInline = true;
       videoEl.id = `remote-${peerId}`;
-      config.remoteContainerEl?.appendChild(videoEl);
+
+      const fsBtn = document.createElement('button');
+      fsBtn.className = 'tile-fs';
+      fsBtn.setAttribute('aria-label', 'Fullscreen');
+      fsBtn.title = 'Fullscreen';
+      fsBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 3H5a2 2 0 0 0-2 2v4"></path>
+          <polyline points="9 3 9 9 3 9"></polyline>
+          <path d="M15 21h4a2 2 0 0 0 2-2v-4"></path>
+          <polyline points="15 21 15 15 21 15"></polyline>
+          <path d="M21 9V5a2 2 0 0 0-2-2h-4"></path>
+          <polyline points="15 9 21 9 21 3"></polyline>
+          <path d="M3 15v4a2 2 0 0 0 2 2h4"></path>
+          <polyline points="3 15 9 15 9 21"></polyline>
+        </svg>`;
+      fsBtn.onclick = async () => {
+        try {
+          if (document.fullscreenElement) await document.exitFullscreen();
+          else if (wrapper.requestFullscreen) await wrapper.requestFullscreen();
+        } catch (e) { console.warn('tile fullscreen failed', e); }
+      };
+
+      wrapper.appendChild(videoEl);
+      wrapper.appendChild(fsBtn);
+      config.remoteContainerEl?.appendChild(wrapper);
       peer.videoEl = videoEl;
+      peer.containerEl = wrapper;
     }
     const [stream] = ev.streams;
     const v = peer.videoEl;
@@ -160,7 +190,7 @@ export function createPeerConnection(peerId) {
   pc.onicecandidateerror = (e) => console.warn('icecandidateerror', peerId, e);
 
   const polite = (state.socket?.id || '') < peerId;
-  state.peers.set(peerId, { pc, videoEl: null, screenAudioSender: screenAudioSender || null, makingOffer: false, polite });
+  state.peers.set(peerId, { pc, videoEl: null, containerEl: null, screenAudioSender: screenAudioSender || null, makingOffer: false, polite });
   const p = state.peers.get(peerId);
   if (screenAudioSender && p) p.screenAudioSender = screenAudioSender;
   return pc;
@@ -170,7 +200,11 @@ export function removePeer(peerId) {
   const peer = state.peers.get(peerId);
   if (!peer) return;
   try { peer.pc.close(); } catch {}
-  if (peer.videoEl?.parentElement) peer.videoEl.parentElement.removeChild(peer.videoEl);
+  if (peer.containerEl && peer.containerEl.parentElement) {
+    try { peer.containerEl.parentElement.removeChild(peer.containerEl); } catch {}
+  } else if (peer.videoEl?.parentElement) {
+    try { peer.videoEl.parentElement.removeChild(peer.videoEl); } catch {}
+  }
   state.peers.delete(peerId);
 }
 

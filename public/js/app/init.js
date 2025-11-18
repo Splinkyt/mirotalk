@@ -49,7 +49,7 @@ export async function init() {
     const toggleMic = $('toggleMic');
     const shareScreen = $('shareScreen');
     const stopShare = $('stopShare');
-    const fullscreenShare = $('fullscreenShare');
+    const shareToggle = document.getElementById('shareToggle');
     const sendChat = $('sendChat');
 
     const connected = !!state.socket && !!state.socket.connected;
@@ -68,7 +68,7 @@ export async function init() {
       toggleCam.disabled = !state.localStream;
       toggleCam.classList.remove('on', 'off');
       toggleCam.classList.add(camEnabled ? 'on' : 'off');
-      toggleCam.textContent = camEnabled ? 'Camera On' : 'Camera Off';
+      // icon-only — do not change inner content
       // HIG-friendly: reflect toggle state for assistive tech
       try { toggleCam.setAttribute('aria-pressed', String(!!camEnabled)); } catch {}
     }
@@ -77,7 +77,7 @@ export async function init() {
       toggleMic.disabled = !state.localStream;
       toggleMic.classList.remove('on', 'off');
       toggleMic.classList.add(micEnabled ? 'on' : 'off');
-      toggleMic.textContent = micEnabled ? 'Mic On' : 'Mic Off';
+      // icon-only — do not change inner content
       // HIG-friendly: reflect toggle state for assistive tech
       try { toggleMic.setAttribute('aria-pressed', String(!!micEnabled)); } catch {}
     }
@@ -93,10 +93,15 @@ export async function init() {
       stopShare.textContent = sharing ? 'Sharing… Stop' : 'Stop Share';
     }
 
-    if (fullscreenShare) {
-      const anyVideo = sharing || remoteVideos.childElementCount > 0 || !!localVideo.srcObject;
-      fullscreenShare.disabled = !anyVideo;
-      fullscreenShare.textContent = isFs ? 'Exit Fullscreen' : 'Fullscreen';
+    if (shareToggle) {
+      shareToggle.disabled = !connected;
+      shareToggle.classList.toggle('danger', sharing);
+      shareToggle.classList.toggle('is-sharing', sharing);
+      shareToggle.classList.toggle('pulse', sharing);
+      try {
+        shareToggle.setAttribute('aria-label', sharing ? 'Stop sharing' : 'Share screen');
+        shareToggle.title = sharing ? 'Stop sharing' : 'Share screen';
+      } catch {}
     }
   }
 
@@ -125,14 +130,7 @@ export async function init() {
     if (localVideo?.srcObject) return localVideo;
     return null;
   }
-  function toggleFullscreen() {
-    if (isFullscreen()) exitFullscreen();
-    else {
-      const target = findSharedVideoEl() || document.querySelector('main') || document.documentElement;
-      enterFullscreen(target);
-    }
-    setTimeout(updateControls, 0);
-  }
+  // local tile fullscreen button handler will request fullscreen on local tile
 
   function wireUI() {
     $('joinBtn').onclick = async () => {
@@ -208,8 +206,24 @@ export async function init() {
       updateControls();
     };
 
-    const fsBtn = $('fullscreenShare');
-    if (fsBtn) fsBtn.onclick = toggleFullscreen;
+    // New unified share toggle (icon button in bottom toolbar)
+    const shareToggle = document.getElementById('shareToggle');
+    if (shareToggle) {
+      shareToggle.onclick = () => {
+        if (state.screenStream) $('stopShare').onclick();
+        else $('shareScreen').onclick();
+      };
+    }
+
+    // Local tile fullscreen button
+    const localFsBtn = document.getElementById('localFsBtn');
+    const localTile = document.getElementById('localTile');
+    if (localFsBtn && localTile) {
+      localFsBtn.onclick = async () => {
+        if (isFullscreen()) await exitFullscreen();
+        else await enterFullscreen(localTile);
+      };
+    }
     document.addEventListener('fullscreenchange', updateControls);
 
     const enableBtn = document.getElementById('enableAudioBtn');
