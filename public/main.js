@@ -4,6 +4,8 @@ const state = {
   displayName: null,
   localStream: null,
   screenStream: null,
+  compositeTrack: null,
+  stopComposite: null,
   peers: new Map(), // peerId -> { pc, streams: { cam, screen }, videoEl }
   sharedPeerId: null,
   iceServers: [
@@ -70,6 +72,93 @@ function resumeAllPlayback() {
   });
 }
 // ---- End helpers ----
+
+// Composite screen + webcam (PIP) into a single video track
+function startPipComposite(screenStream, camTrack, {
+  pipWidthRatio = 0.22, // width of PIP relative to canvas width
+  margin = 16,
+  corner = 'br', // 'br' | 'bl' | 'tr' | 'tl'
+  fps = 30,
+  round = 12,
+} = {}) {
+  const screenTrack = screenStream?.getVideoTracks?.()[0];
+  if (!screenTrack) throw new Error('No screen video track');
+
+  const screenVideo = document.createElement('video');
+  screenVideo.muted = true; screenVideo.playsInline = true; screenVideo.autoplay = true;
+  screenVideo.srcObject = screenStream;
+
+  const camStream = new MediaStream(camTrack ? [camTrack] : []);
+  const camVideo = document.createElement('video');
+  camVideo.muted = true; camVideo.playsInline = true; camVideo.autoplay = true;
+  camVideo.srcObject = camStream;
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  let running = true;
+
+  const updateCanvasSize = () => {
+    const s = screenTrack.getSettings?.() || {};
+    const w = s.width || 1280;
+    const h = s.height || 720;
+    canvas.width = w; canvas.height = h;
+  };
+  updateCanvasSize();
+
+  const draw = () => {
+    if (!running) return;
+    try { ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height); } catch {}
+
+    if (camTrack && camTrack.readyState === 'live') {
+      const pipW = Math.round(canvas.width * pipWidthRatio);
+      const aspect = camVideo.videoWidth && camVideo.videoHeight ? (camVideo.videoHeight / camVideo.videoWidth) : (9/16);
+      const pipH = Math.round(pipW * aspect);
+      let x = canvas.width - pipW - margin;
+      let y = canvas.height - pipH - margin;
+      if (corner === 'bl') { x = margin; y = canvas.height - pipH - margin; }
+      if (corner === 'tr') { x = canvas.width - pipW - margin; y = margin; }
+      if (corner === 'tl') { x = margin; y = margin; }
+
+      ctx.save();
+      if (round > 0) {
+        const r = Math.min(round, Math.min(pipW, pipH) / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + pipW, y, x + pipW, y + pipH, r);
+        ctx.arcTo(x + pipW, y + pipH, x, y + pipH, r);
+        ctx.arcTo(x, y + pipH, x, y, r);
+        ctx.arcTo(x, y, x + pipW, y, r);
+        ctx.closePath();
+        ctx.clip();
+      }
+      try { ctx.drawImage(camVideo, x, y, pipW, pipH); } catch {}
+      ctx.restore();
+
+      // optional subtle border
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(x + 1.5, y + 1.5, pipW - 3, pipH - 3);
+    }
+
+    setTimeout(() => requestAnimationFrame(draw), Math.max(0, 1000 / fps - 4));
+  };
+
+  const ensurePlay = (v) => v.play().catch(() => {});
+  screenVideo.addEventListener('loadeddata', () => ensurePlay(screenVideo), { once: true });
+  camVideo.addEventListener('loadeddata', () => ensurePlay(camVideo), { once: true });
+
+  running = true;
+  requestAnimationFrame(draw);
+
+  const compositeStream = canvas.captureStream(fps);
+  const compositeTrack = compositeStream.getVideoTracks()[0];
+  try { if ('contentHint' in compositeTrack) compositeTrack.contentHint = 'detail'; } catch {}
+
+  const stop = () => { running = false; try { compositeTrack.stop(); } catch {} };
+  screenTrack.addEventListener('ended', stop, { once: true });
+
+  return { compositeStream, compositeTrack, stop };
+}
 
 function updateControls() {
   const joinBtn = $('joinBtn');
@@ -176,11 +265,11 @@ function createPeerConnection(peerId) {
       videoSender = pc.addTrack(videos[0], state.localStream);
     }
   }
-  // If we are currently sharing, immediately switch the outbound video to the screen track
+  // If we are currently sharing, immediately switch the outbound video to the composite (or screen) track
   if (state.screenStream) {
-    const screenVideo = state.screenStream.getVideoTracks?.()[0];
-    if (screenVideo && videoSender) {
-      try { videoSender.replaceTrack(screenVideo); } catch (e) { console.warn('replaceTrack(screen) failed', e); }
+    const outVideo = state.compositeTrack || state.screenStream.getVideoTracks?.()[0] || null;
+    if (outVideo && videoSender) {
+      try { videoSender.replaceTrack(outVideo); } catch (e) { console.warn('replaceTrack(share video) failed', e); }
     }
   }
   // If we're sharing and have a screen audio track, attach it so late joiners hear it
@@ -360,22 +449,32 @@ function removeScreenAudioFromAll() {
 }
 
 function addScreenTracksToAll() {
-  // Replace current outbound video with screen video (no extra transceivers). Keep mic as-is.
+  // Replace current outbound video with composite (if available) otherwise raw screen. Keep mic as-is.
   if (!state.screenStream) return;
-  const screenVideo = state.screenStream.getVideoTracks?.()[0];
-  if (screenVideo) {
-    // Hint: screen content benefits from "detail" hint for clarity.
-    try { screenVideo.contentHint = 'detail'; } catch {}
-    replaceVideoTrackForAll(screenVideo);
+  const video = state.compositeTrack || state.screenStream.getVideoTracks?.()[0] || null;
+  if (video) {
+    try { if ('contentHint' in video) video.contentHint = 'detail'; } catch {}
+    replaceVideoTrackForAll(video);
   }
   // Also attach screen audio if available
   addScreenAudioToAll();
 }
 
 function stopScreenTracks() {
-  if (!state.screenStream) return;
-  state.screenStream.getTracks().forEach((t) => t.stop());
-  state.screenStream = null;
+  // Stop composite if running
+  if (state.stopComposite) {
+    try { state.stopComposite(); } catch {}
+    state.stopComposite = null;
+  }
+  if (state.compositeTrack) {
+    try { state.compositeTrack.stop(); } catch {}
+    state.compositeTrack = null;
+  }
+  // Stop raw screen tracks
+  if (state.screenStream) {
+    try { state.screenStream.getTracks().forEach((t) => t.stop()); } catch {}
+    state.screenStream = null;
+  }
   updateControls();
 }
 
@@ -488,6 +587,19 @@ function wireUI() {
         stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
       }
       state.screenStream = stream;
+      // Build composite (screen + webcam PIP) and prefer it for outbound video
+      const camTrack = state.localStream?.getVideoTracks?.()[0] || null;
+      try {
+        const { compositeTrack, stop } = startPipComposite(state.screenStream, camTrack, {
+          corner: 'br', pipWidthRatio: 0.22, margin: 16, fps: 30, round: 12,
+        });
+        state.compositeTrack = compositeTrack;
+        state.stopComposite = stop;
+      } catch (e) {
+        console.warn('Failed to start PIP composite, falling back to raw screen video', e);
+        state.compositeTrack = null;
+        state.stopComposite = null;
+      }
       // Hint the sharer if no screen audio track was captured (common on desktop without enabling the toggle)
       try {
         const hasScreenAudio = !!(state.screenStream?.getAudioTracks?.().length);
