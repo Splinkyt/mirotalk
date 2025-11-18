@@ -69,6 +69,8 @@ export async function init() {
       toggleCam.classList.remove('on', 'off');
       toggleCam.classList.add(camEnabled ? 'on' : 'off');
       toggleCam.textContent = camEnabled ? 'Camera On' : 'Camera Off';
+      // HIG-friendly: reflect toggle state for assistive tech
+      try { toggleCam.setAttribute('aria-pressed', String(!!camEnabled)); } catch {}
     }
 
     if (toggleMic) {
@@ -76,6 +78,8 @@ export async function init() {
       toggleMic.classList.remove('on', 'off');
       toggleMic.classList.add(micEnabled ? 'on' : 'off');
       toggleMic.textContent = micEnabled ? 'Mic On' : 'Mic Off';
+      // HIG-friendly: reflect toggle state for assistive tech
+      try { toggleMic.setAttribute('aria-pressed', String(!!micEnabled)); } catch {}
     }
 
     if (shareScreen) {
