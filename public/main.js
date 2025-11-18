@@ -1,164 +1,50 @@
-const state = {
-  socket: null,
-  roomId: null,
-  displayName: null,
-  localStream: null,
-  screenStream: null,
-  compositeTrack: null,
-  stopComposite: null,
-  peers: new Map(), // peerId -> { pc, streams: { cam, screen }, videoEl }
-  sharedPeerId: null,
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' }
-  ]
-};
+import { $ } from './js/core/dom.js';
+import { log } from './js/core/logger.js';
+import { unlockAudio, showEnableAudioUI, hideEnableAudioUI, resumeAllPlayback } from './js/media/audioUnlock.js';
+import { createChat } from './js/ui/chat.js';
+import { startPipComposite } from './js/media/pipComposer.js';
+import { connect as connectSignaling } from './js/signaling/socket.js';
+import { initLocalMedia as initLocalMediaModule, toggleCam as toggleCamControl, toggleMic as toggleMicControl } from './js/media/localMedia.js';
+import { startScreenShare, stopScreenTracks, addScreenTracksToAll, removeScreenAudioFromAll, replaceVideoTrackForAll, getScreenAudioTrack } from './js/media/screenShare.js';
+import { state } from './js/core/state.js';
+import { initPeerManager, createPeerConnection, removePeer, callPeer, addLocalTracksToAll } from './js/rtc/peerManager.js';
 
-const $ = (id) => document.getElementById(id);
+// state is now imported from ./js/core/state.js
+
 const statusEl = $('status');
 const localVideo = $('localVideo');
 const remoteVideos = $('remoteVideos');
+const chatLogEl = $('chatLog');
+const chatInputEl = $('chatInput');
+const sendChatBtn = $('sendChat');
 
-function log(...args) {
-  console.log('[MVP]', ...args);
-}
+// Initialize chat UI module
+const chatUI = createChat({
+  logEl: chatLogEl,
+  inputEl: chatInputEl,
+  sendBtn: sendChatBtn,
+  getSelfId: () => state.socket?.id,
+  onSend: (text) => state.socket?.emit('chat', { roomId: state.roomId, message: text })
+});
+
+// Initialize peer manager (handles remote video elements and autoplay UI)
+initPeerManager({
+  remoteContainerEl: remoteVideos,
+  showEnableAudioUI,
+  hideEnableAudioUI,
+});
 
 function appendChat({ from, message, ts }) {
-  const logEl = $('chatLog');
-  const div = document.createElement('div');
-  const time = new Date(ts || Date.now()).toLocaleTimeString();
-  div.textContent = `[${time}] ${from === state.socket?.id ? 'You' : from}: ${message}`;
-  logEl.appendChild(div);
-  logEl.scrollTop = logEl.scrollHeight;
+  chatUI.append({ from, message, ts });
 }
 
 function setStatus(text) {
   statusEl.textContent = text;
 }
 
-// ---- Autoplay / Audio unlocking helpers ----
-let audioCtx = null;
-function unlockAudio() {
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return;
-  if (!audioCtx) audioCtx = new AC();
-  if (audioCtx.state === 'suspended') {
-    try { audioCtx.resume(); } catch {}
-  }
-}
+// ---- Autoplay / Audio unlocking helpers are now in ./js/media/audioUnlock.js ----
 
-function showEnableAudioUI() {
-  const btn = document.getElementById('enableAudioBtn');
-  const hint = document.getElementById('enableAudioHint');
-  if (btn) btn.style.display = 'inline-flex';
-  if (hint) hint.style.display = 'inline';
-}
-
-function hideEnableAudioUI() {
-  const btn = document.getElementById('enableAudioBtn');
-  const hint = document.getElementById('enableAudioHint');
-  if (btn) btn.style.display = 'none';
-  if (hint) hint.style.display = 'none';
-}
-
-function resumeAllPlayback() {
-  const nodes = document.querySelectorAll('#remoteVideos video');
-  nodes.forEach((v) => {
-    try {
-      v.muted = false;
-      v.autoplay = true;
-      v.playsInline = true;
-      if (typeof v.play === 'function') v.play().catch(() => {});
-    } catch {}
-  });
-}
-// ---- End helpers ----
-
-// Composite screen + webcam (PIP) into a single video track
-function startPipComposite(screenStream, camTrack, {
-  pipWidthRatio = 0.22, // width of PIP relative to canvas width
-  margin = 16,
-  corner = 'br', // 'br' | 'bl' | 'tr' | 'tl'
-  fps = 30,
-  round = 12,
-} = {}) {
-  const screenTrack = screenStream?.getVideoTracks?.()[0];
-  if (!screenTrack) throw new Error('No screen video track');
-
-  const screenVideo = document.createElement('video');
-  screenVideo.muted = true; screenVideo.playsInline = true; screenVideo.autoplay = true;
-  screenVideo.srcObject = screenStream;
-
-  const camStream = new MediaStream(camTrack ? [camTrack] : []);
-  const camVideo = document.createElement('video');
-  camVideo.muted = true; camVideo.playsInline = true; camVideo.autoplay = true;
-  camVideo.srcObject = camStream;
-
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d', { alpha: false });
-  let running = true;
-
-  const updateCanvasSize = () => {
-    const s = screenTrack.getSettings?.() || {};
-    const w = s.width || 1280;
-    const h = s.height || 720;
-    canvas.width = w; canvas.height = h;
-  };
-  updateCanvasSize();
-
-  const draw = () => {
-    if (!running) return;
-    try { ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height); } catch {}
-
-    if (camTrack && camTrack.readyState === 'live') {
-      const pipW = Math.round(canvas.width * pipWidthRatio);
-      const aspect = camVideo.videoWidth && camVideo.videoHeight ? (camVideo.videoHeight / camVideo.videoWidth) : (9/16);
-      const pipH = Math.round(pipW * aspect);
-      let x = canvas.width - pipW - margin;
-      let y = canvas.height - pipH - margin;
-      if (corner === 'bl') { x = margin; y = canvas.height - pipH - margin; }
-      if (corner === 'tr') { x = canvas.width - pipW - margin; y = margin; }
-      if (corner === 'tl') { x = margin; y = margin; }
-
-      ctx.save();
-      if (round > 0) {
-        const r = Math.min(round, Math.min(pipW, pipH) / 2);
-        ctx.beginPath();
-        ctx.moveTo(x + r, y);
-        ctx.arcTo(x + pipW, y, x + pipW, y + pipH, r);
-        ctx.arcTo(x + pipW, y + pipH, x, y + pipH, r);
-        ctx.arcTo(x, y + pipH, x, y, r);
-        ctx.arcTo(x, y, x + pipW, y, r);
-        ctx.closePath();
-        ctx.clip();
-      }
-      try { ctx.drawImage(camVideo, x, y, pipW, pipH); } catch {}
-      ctx.restore();
-
-      // optional subtle border
-      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(x + 1.5, y + 1.5, pipW - 3, pipH - 3);
-    }
-
-    setTimeout(() => requestAnimationFrame(draw), Math.max(0, 1000 / fps - 4));
-  };
-
-  const ensurePlay = (v) => v.play().catch(() => {});
-  screenVideo.addEventListener('loadeddata', () => ensurePlay(screenVideo), { once: true });
-  camVideo.addEventListener('loadeddata', () => ensurePlay(camVideo), { once: true });
-
-  running = true;
-  requestAnimationFrame(draw);
-
-  const compositeStream = canvas.captureStream(fps);
-  const compositeTrack = compositeStream.getVideoTracks()[0];
-  try { if ('contentHint' in compositeTrack) compositeTrack.contentHint = 'detail'; } catch {}
-
-  const stop = () => { running = false; try { compositeTrack.stop(); } catch {} };
-  screenTrack.addEventListener('ended', stop, { once: true });
-
-  return { compositeStream, compositeTrack, stop };
-}
+// startPipComposite moved to ./js/media/pipComposer.js
 
 function updateControls() {
   const joinBtn = $('joinBtn');
@@ -221,262 +107,17 @@ function updateControls() {
   }
 }
 
-async function initLocalMedia() {
-  if (state.localStream) return state.localStream;
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
-    state.localStream = stream;
-    localVideo.srcObject = stream;
-    // Provide processing hints to the browser
-    try {
-      const mic = stream.getAudioTracks?.()[0];
-      if (mic && 'contentHint' in mic) mic.contentHint = 'speech';
-      const cam = stream.getVideoTracks?.()[0];
-      if (cam && 'contentHint' in cam) cam.contentHint = 'motion';
-    } catch {}
-    updateControls();
-    return stream;
-  } catch (e) {
-    alert('Failed to get camera/mic: ' + e.message);
-    throw e;
-  }
-}
+// initLocalMedia moved to ./js/media/localMedia.js
 
-function createPeerConnection(peerId) {
-  const pc = new RTCPeerConnection({ iceServers: state.iceServers });
+// removePeer moved to ./js/rtc/peerManager.js
 
-  // Add local tracks in a deterministic order to keep m-line ordering stable
-  let audioSender = null;
-  let videoSender = null;
-  if (state.localStream) {
-    const audios = state.localStream.getAudioTracks ? state.localStream.getAudioTracks() : [];
-    const videos = state.localStream.getVideoTracks ? state.localStream.getVideoTracks() : [];
-    if (audios[0]) {
-      audioSender = pc.addTrack(audios[0], state.localStream);
-    }
-    if (videos[0]) {
-      videoSender = pc.addTrack(videos[0], state.localStream);
-    }
-  }
-  // If we are currently sharing, immediately switch the outbound video to the composite (or screen) track
-  if (state.screenStream) {
-    const outVideo = state.compositeTrack || state.screenStream.getVideoTracks?.()[0] || null;
-    if (outVideo && videoSender) {
-      try { videoSender.replaceTrack(outVideo); } catch (e) { console.warn('replaceTrack(share video) failed', e); }
-    }
-  }
-  // If we're sharing and have a screen audio track, attach it so late joiners hear it
-  let screenAudioSender = null;
-  const screenAudio = getScreenAudioTrack?.() || null;
-  if (state.screenStream && screenAudio) {
-    try {
-      try { if ('contentHint' in screenAudio) screenAudio.contentHint = 'music'; } catch {}
-      screenAudioSender = pc.addTrack(screenAudio, state.localStream);
-    } catch (e) {
-      console.warn('addTrack(screen audio) on new PC failed', e);
-    }
-  }
+// callPeer moved to ./js/rtc/peerManager.js
 
-  pc.onicecandidate = (ev) => {
-    if (ev.candidate) {
-      state.socket.emit('ice-candidate', { to: peerId, candidate: ev.candidate });
-    }
-  };
+// addLocalTracksToAll moved to ./js/rtc/peerManager.js
 
-  pc.onnegotiationneeded = async () => {
-    const peer = state.peers.get(peerId);
-    if (!peer) return;
-    // Only negotiate from a stable state to avoid glare/double-offers
-    if (pc.signalingState !== 'stable') return;
-    try {
-      peer.makingOffer = true;
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      state.socket.emit('offer', { to: peerId, sdp: offer.sdp });
-    } catch (e) {
-      console.warn('negotiationneeded offer failed', e);
-    } finally {
-      peer.makingOffer = false;
-    }
-  };
+// replaceVideoTrackForAll moved to ./js/media/screenShare.js
 
-  pc.ontrack = (ev) => {
-    let peer = state.peers.get(peerId);
-    if (!peer) {
-      peer = { pc, streams: {}, videoEl: null, screenAudioSender: null };
-      state.peers.set(peerId, peer);
-    }
-    if (!peer.videoEl) {
-      const videoEl = document.createElement('video');
-      videoEl.autoplay = true;
-      videoEl.playsInline = true;
-      videoEl.id = `remote-${peerId}`;
-      remoteVideos.appendChild(videoEl);
-      peer.videoEl = videoEl;
-    }
-    const [stream] = ev.streams;
-    const v = peer.videoEl;
-    v.srcObject = stream;
-    v.muted = false;
-    v.autoplay = true;
-    v.playsInline = true;
-
-    const tryPlay = () => v.play().then(() => {
-      hideEnableAudioUI();
-    }).catch((err) => {
-      console.warn('Autoplay blocked for remote media:', err);
-      showEnableAudioUI();
-    });
-
-    if (v.readyState >= 2) tryPlay();
-    else v.addEventListener('loadeddata', tryPlay, { once: true });
-  };
-
-  pc.onconnectionstatechange = () => {
-    log('pc state', peerId, pc.connectionState);
-    if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
-      removePeer(peerId);
-    }
-  };
-
-  const polite = (state.socket?.id || '') < peerId;
-  state.peers.set(peerId, { pc, streams: {}, videoEl: null, screenAudioSender: null, makingOffer: false, ignoreOffer: false, isSettingRemoteAnswerPending: false, polite });
-  const p = state.peers.get(peerId);
-  if (screenAudioSender && p) p.screenAudioSender = screenAudioSender;
-  return pc;
-}
-
-function removePeer(peerId) {
-  const peer = state.peers.get(peerId);
-  if (!peer) return;
-  try { peer.pc.getSenders().forEach((s) => { try { s.track && s.track.stop && s.track.readyState === 'ended'; } catch {} }); } catch {}
-  try { peer.pc.close(); } catch {}
-  if (peer.videoEl?.parentElement) peer.videoEl.parentElement.removeChild(peer.videoEl);
-  state.peers.delete(peerId);
-}
-
-async function callPeer(peerId) {
-  const pc = state.peers.get(peerId)?.pc || createPeerConnection(peerId);
-  const peer = state.peers.get(peerId);
-  if (!peer) return;
-  if (pc.signalingState !== 'stable') return; // avoid glare
-  try {
-    peer.makingOffer = true;
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    state.socket.emit('offer', { to: peerId, sdp: offer.sdp });
-  } catch (e) {
-    console.warn('callPeer offer failed', e);
-  } finally {
-    peer.makingOffer = false;
-  }
-}
-
-function addLocalTracksToAll() {
-  for (const [peerId, peer] of state.peers.entries()) {
-    const senders = peer.pc.getSenders();
-    if (state.localStream) {
-      const audios = state.localStream.getAudioTracks ? state.localStream.getAudioTracks() : [];
-      const videos = state.localStream.getVideoTracks ? state.localStream.getVideoTracks() : [];
-      // Audio first
-      for (const track of audios) {
-        const sender = senders.find((s) => s.track && s.track.kind === 'audio');
-        if (sender) sender.replaceTrack(track);
-        else peer.pc.addTrack(track, state.localStream);
-      }
-      // Then video
-      for (const track of videos) {
-        const sender = senders.find((s) => s.track && s.track.kind === 'video');
-        if (sender) sender.replaceTrack(track);
-        else peer.pc.addTrack(track, state.localStream);
-      }
-    }
-  }
-}
-
-function replaceVideoTrackForAll(newVideoTrack) {
-  if (!newVideoTrack) return;
-  for (const [, peer] of state.peers.entries()) {
-    const sender = peer.pc.getSenders().find((s) => s.track && s.track.kind === 'video');
-    if (sender) {
-      try {
-        sender.replaceTrack(newVideoTrack);
-      } catch (e) {
-        console.warn('replaceTrack failed', e);
-      }
-    }
-  }
-}
-
-function getScreenAudioTrack() {
-  return state.screenStream?.getAudioTracks?.()[0] || null;
-}
-
-function addScreenAudioToAll() {
-  const audio = getScreenAudioTrack();
-  if (!audio) return;
-  try { if ('contentHint' in audio) audio.contentHint = 'music'; } catch {}
-  for (const [, peer] of state.peers.entries()) {
-    if (peer.screenAudioSender && peer.pc.getSenders().includes(peer.screenAudioSender)) continue;
-    try {
-      // Attach using the same stream reference to keep MSID consistent with the camera stream.
-      const sender = peer.pc.addTrack(audio, state.localStream);
-      peer.screenAudioSender = sender;
-    } catch (e) {
-      console.warn('addTrack(screen audio) failed', e);
-    }
-  }
-}
-
-function removeScreenAudioFromAll() {
-  for (const [, peer] of state.peers.entries()) {
-    const sender = peer.screenAudioSender;
-    if (!sender) continue;
-    try {
-      peer.pc.removeTrack(sender);
-    } catch (e) {
-      console.warn('removeTrack(screen audio) failed', e);
-    }
-    peer.screenAudioSender = null;
-  }
-}
-
-function addScreenTracksToAll() {
-  // Replace current outbound video with composite (if available) otherwise raw screen. Keep mic as-is.
-  if (!state.screenStream) return;
-  const video = state.compositeTrack || state.screenStream.getVideoTracks?.()[0] || null;
-  if (video) {
-    try { if ('contentHint' in video) video.contentHint = 'detail'; } catch {}
-    replaceVideoTrackForAll(video);
-  }
-  // Also attach screen audio if available
-  addScreenAudioToAll();
-}
-
-function stopScreenTracks() {
-  // Stop composite if running
-  if (state.stopComposite) {
-    try { state.stopComposite(); } catch {}
-    state.stopComposite = null;
-  }
-  if (state.compositeTrack) {
-    try { state.compositeTrack.stop(); } catch {}
-    state.compositeTrack = null;
-  }
-  // Stop raw screen tracks
-  if (state.screenStream) {
-    try { state.screenStream.getTracks().forEach((t) => t.stop()); } catch {}
-    state.screenStream = null;
-  }
-  updateControls();
-}
+// screen share helpers moved to ./js/media/screenShare.js
 
 function isFullscreen() {
   return !!(document.fullscreenElement || document.webkitFullscreenElement);
@@ -535,7 +176,7 @@ function wireUI() {
   $('joinBtn').onclick = async () => {
     state.displayName = $('displayName').value || 'Guest';
     state.roomId = $('roomId').value || 'demo';
-    await initLocalMedia();
+    await initLocalMediaModule(localVideo, updateControls);
     connectSocket();
     updateControls();
   };
@@ -551,65 +192,27 @@ function wireUI() {
     updateControls();
   };
 
-  $('sendChat').onclick = () => {
-    const text = $('chatInput').value.trim();
-    if (!text) return;
-    state.socket?.emit('chat', { roomId: state.roomId, message: text });
-    $('chatInput').value = '';
-  };
+  // Chat send is handled by chat module initialization
 
   $('toggleCam').onclick = () => {
-    if (!state.localStream) return;
-    const v = state.localStream.getVideoTracks()[0];
-    if (v) { v.enabled = !v.enabled; localVideo.classList.toggle('muted', !v.enabled); }
-    updateControls();
+    toggleCamControl(localVideo, updateControls);
   };
 
   $('toggleMic').onclick = () => {
-    if (!state.localStream) return;
-    const a = state.localStream.getAudioTracks()[0];
-    if (a) { a.enabled = !a.enabled; }
-    updateControls();
+    toggleMicControl(updateControls);
   };
 
   $('shareScreen').onclick = async () => {
     try {
-      // Request screen with audio; browsers typically only provide system/tab audio for tab capture
-      let stream;
-      try {
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: true
-        });
-      } catch (err) {
-        // Fallback: if audio capture is not permitted/supported, retry without audio
-        console.warn('getDisplayMedia with audio failed, retrying video-only', err);
-        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-      }
-      state.screenStream = stream;
-      // Build composite (screen + webcam PIP) and prefer it for outbound video
-      const camTrack = state.localStream?.getVideoTracks?.()[0] || null;
-      try {
-        const { compositeTrack, stop } = startPipComposite(state.screenStream, camTrack, {
-          corner: 'br', pipWidthRatio: 0.22, margin: 16, fps: 30, round: 12,
-        });
-        state.compositeTrack = compositeTrack;
-        state.stopComposite = stop;
-      } catch (e) {
-        console.warn('Failed to start PIP composite, falling back to raw screen video', e);
-        state.compositeTrack = null;
-        state.stopComposite = null;
-      }
+      const stream = await startScreenShare();
       // Hint the sharer if no screen audio track was captured (common on desktop without enabling the toggle)
       try {
-        const hasScreenAudio = !!(state.screenStream?.getAudioTracks?.().length);
+        const hasScreenAudio = !!(stream?.getAudioTracks?.().length);
         if (!hasScreenAudio) {
           appendChat({ from: 'system', message: 'No screen audio captured. In Chrome/Edge share a Tab and enable “Share tab audio”. On Windows Entire screen, enable “Share system audio”. On macOS only Tab audio works.', ts: Date.now() });
         }
       } catch {}
-      addScreenTracksToAll();
       state.socket?.emit('screen-share', { roomId: state.roomId, action: 'start' });
-      // Mark ourselves as the current sharer locally as well
       state.sharedPeerId = state.socket?.id || null;
       updateControls();
       stream.getVideoTracks()[0].addEventListener('ended', () => {
@@ -668,91 +271,71 @@ function wireUI() {
 
 function connectSocket() {
   if (state.socket) state.socket.disconnect();
-  const socket = window.io();
+  const { socket } = connectSignaling({
+    roomId: state.roomId,
+    displayName: state.displayName,
+    handlers: {
+      onConnect: (sock) => { state.socket = sock; setStatus('Connected'); updateControls(); },
+      onJoined: ({ participants }) => { log('joined', participants); },
+      onParticipantJoined: async ({ id, displayName }) => { log('participant-joined', id, displayName); await callPeer(id); },
+      onOffer: async ({ from, sdp }) => {
+        const pc = state.peers.get(from)?.pc || createPeerConnection(from);
+        const peer = state.peers.get(from);
+        if (!peer) return;
+        const offer = { type: 'offer', sdp };
+        const offerCollision = peer.makingOffer || pc.signalingState !== 'stable';
+        const ignore = !peer.polite && offerCollision;
+        if (ignore) {
+          console.warn('[signaling] Ignoring offer due to collision');
+          return;
+        }
+        try {
+          if (offerCollision) {
+            try { await pc.setLocalDescription({ type: 'rollback' }); } catch (e) { console.warn('rollback failed (safe to ignore)', e); }
+          }
+          await pc.setRemoteDescription(offer);
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          state.socket.emit('answer', { to: from, sdp: answer.sdp });
+        } catch (e) {
+          console.warn('Error handling remote offer', e);
+        }
+      },
+      onAnswer: async ({ from, sdp }) => {
+        const pc = state.peers.get(from)?.pc;
+        if (!pc) return;
+        if (pc.signalingState !== 'have-local-offer') {
+          console.warn('Ignoring answer: unexpected signalingState', pc.signalingState);
+          return;
+        }
+        await pc.setRemoteDescription({ type: 'answer', sdp });
+      },
+      onIceCandidate: async ({ from, candidate }) => {
+        const pc = state.peers.get(from)?.pc;
+        if (!pc) return;
+        try { await pc.addIceCandidate(candidate); } catch (e) { console.warn('addIceCandidate failed', e); }
+      },
+      onChat: (payload) => appendChat(payload),
+      onParticipantLeft: ({ id }) => {
+        removePeer(id);
+        if (state.sharedPeerId === id) {
+          state.sharedPeerId = null;
+          updateControls();
+        }
+      },
+      onScreenShare: ({ participantId, action }) => {
+        appendChat({ from: participantId, message: `screen ${action}`, ts: Date.now() });
+        if (action === 'start') {
+          state.sharedPeerId = participantId;
+        } else if (action === 'stop') {
+          if (state.sharedPeerId === participantId) state.sharedPeerId = null;
+        }
+        updateControls();
+      },
+      onDisconnect: () => { setStatus('Disconnected'); updateControls(); },
+    },
+  });
   state.socket = socket;
-
-  socket.on('connect', () => {
-    setStatus('Connected');
-    socket.emit('join', { roomId: state.roomId, displayName: state.displayName });
-    updateControls();
-  });
-
-  socket.on('joined', async ({ participants }) => {
-    log('joined', participants);
-    // MVP anti-glare: do NOT initiate offers here. Existing participants will call us on 'participant-joined'.
-  });
-
-  socket.on('participant-joined', async ({ id, displayName }) => {
-    log('participant-joined', id, displayName);
-    // Initiator can start offer as well
-    await callPeer(id);
-  });
-
-  socket.on('offer', async ({ from, sdp }) => {
-    const pc = state.peers.get(from)?.pc || createPeerConnection(from);
-    const peer = state.peers.get(from);
-    if (!peer) return;
-    const offer = { type: 'offer', sdp };
-    const offerCollision = peer.makingOffer || pc.signalingState !== 'stable';
-    const ignore = !peer.polite && offerCollision;
-    if (ignore) {
-      console.warn('[signaling] Ignoring offer due to collision');
-      return;
-    }
-    try {
-      if (offerCollision) {
-        try { await pc.setLocalDescription({ type: 'rollback' }); } catch (e) { console.warn('rollback failed (safe to ignore)', e); }
-      }
-      await pc.setRemoteDescription(offer);
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      state.socket.emit('answer', { to: from, sdp: answer.sdp });
-    } catch (e) {
-      console.warn('Error handling remote offer', e);
-    }
-  });
-
-  socket.on('answer', async ({ from, sdp }) => {
-    const pc = state.peers.get(from)?.pc;
-    if (!pc) return;
-    // Guard against glare: only set remote answer if we are in have-local-offer state
-    if (pc.signalingState !== 'have-local-offer') {
-      console.warn('Ignoring answer: unexpected signalingState', pc.signalingState);
-      return;
-    }
-    await pc.setRemoteDescription({ type: 'answer', sdp });
-  });
-
-  socket.on('ice-candidate', async ({ from, candidate }) => {
-    const pc = state.peers.get(from)?.pc;
-    if (!pc) return;
-    try { await pc.addIceCandidate(candidate); } catch (e) { console.warn('addIceCandidate failed', e); }
-  });
-
-  socket.on('chat', (payload) => appendChat(payload));
-
-  socket.on('participant-left', ({ id }) => {
-    removePeer(id);
-    if (state.sharedPeerId === id) {
-      state.sharedPeerId = null;
-      updateControls();
-    }
-  });
-
-  socket.on('screen-share', ({ participantId, action }) => {
-    appendChat({ from: participantId, message: `screen ${action}`, ts: Date.now() });
-    if (action === 'start') {
-      state.sharedPeerId = participantId;
-    } else if (action === 'stop') {
-      if (state.sharedPeerId === participantId) state.sharedPeerId = null;
-    }
-    updateControls();
-  });
-
-  socket.on('disconnect', () => {
-    setStatus('Disconnected');
-    updateControls();
-  });
 }
 
 (async function main() {
