@@ -17,6 +17,10 @@ export function initPeerManager({ remoteContainerEl, showEnableAudioUI, hideEnab
 export function createPeerConnection(peerId) {
   const pc = new RTCPeerConnection({ iceServers: state.iceServers });
 
+  // Track transient disconnects per PeerConnection
+  let disconnectTimer = null;
+  let triedIceRestart = false;
+
   // Add local tracks in a deterministic order to keep m-line ordering stable
   let videoSender = null;
   if (state.localStream) {
@@ -104,12 +108,56 @@ export function createPeerConnection(peerId) {
     else v.addEventListener('loadeddata', tryPlay, { once: true });
   };
 
-  pc.onconnectionstatechange = () => {
+  // Debounce transient disconnects and try ICE restart before tearing down
+  pc.onconnectionstatechange = async () => {
     log('pc state', peerId, pc.connectionState);
-    if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
+
+    // On recovery or while connecting again, clear pending timers
+    if (pc.connectionState === 'connected' || pc.connectionState === 'connecting') {
+      if (disconnectTimer) { clearTimeout(disconnectTimer); disconnectTimer = null; }
+      triedIceRestart = false;
+      return;
+    }
+
+    if (pc.connectionState === 'disconnected') {
+      // Many networks cause brief disconnects; wait to see if it recovers
+      if (disconnectTimer) return; // already waiting
+      disconnectTimer = setTimeout(async () => {
+        disconnectTimer = null;
+        // If it recovered in the meantime, do nothing
+        if (pc.connectionState !== 'disconnected') return;
+
+        // Attempt a single ICE restart to recover before teardown
+        if (!triedIceRestart) {
+          triedIceRestart = true;
+          try {
+            const offer = await pc.createOffer({ iceRestart: true });
+            await pc.setLocalDescription(offer);
+            if (state.signaling?.emitOffer) state.signaling.emitOffer(peerId, offer.sdp);
+            else state.socket.emit('offer', { to: peerId, sdp: offer.sdp });
+            // Give the restart time to complete; if still not connected, remove
+            setTimeout(() => { if (pc.connectionState !== 'connected') removePeer(peerId); }, 10000);
+          } catch (e) {
+            console.warn('ICE restart failed – removing peer', e);
+            removePeer(peerId);
+          }
+          return;
+        }
+
+        // Already tried restart and still disconnected
+        removePeer(peerId);
+      }, 3000);
+      return;
+    }
+
+    if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
       removePeer(peerId);
     }
   };
+
+  // Additional visibility for ICE health
+  pc.oniceconnectionstatechange = () => log('ice state', peerId, pc.iceConnectionState);
+  pc.onicecandidateerror = (e) => console.warn('icecandidateerror', peerId, e);
 
   const polite = (state.socket?.id || '') < peerId;
   state.peers.set(peerId, { pc, videoEl: null, screenAudioSender: screenAudioSender || null, makingOffer: false, polite });
