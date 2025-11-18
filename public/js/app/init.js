@@ -47,8 +47,9 @@ export async function init() {
     const leaveBtn = $('leaveBtn');
     const toggleCam = $('toggleCam');
     const toggleMic = $('toggleMic');
-    const shareToggle = $('shareToggle');
-    const shareLabel = document.getElementById('shareLabel');
+    const shareScreen = $('shareScreen');
+    const stopShare = $('stopShare');
+    const fullscreenShare = $('fullscreenShare');
     const sendChat = $('sendChat');
 
     const connected = !!state.socket && !!state.socket.connected;
@@ -57,6 +58,7 @@ export async function init() {
     const camEnabled = !!camTrack && camTrack.enabled !== false;
     const micEnabled = !!micTrack && micTrack.enabled !== false;
     const sharing = !!state.screenStream;
+    const isFs = !!document.fullscreenElement;
 
     if (joinBtn) joinBtn.disabled = connected;
     if (leaveBtn) leaveBtn.disabled = !connected;
@@ -66,36 +68,35 @@ export async function init() {
       toggleCam.disabled = !state.localStream;
       toggleCam.classList.remove('on', 'off');
       toggleCam.classList.add(camEnabled ? 'on' : 'off');
+      toggleCam.textContent = camEnabled ? 'Camera On' : 'Camera Off';
       // HIG-friendly: reflect toggle state for assistive tech
       try { toggleCam.setAttribute('aria-pressed', String(!!camEnabled)); } catch {}
-      try { toggleCam.title = camEnabled ? 'Turn camera off' : 'Turn camera on'; } catch {}
     }
 
     if (toggleMic) {
       toggleMic.disabled = !state.localStream;
       toggleMic.classList.remove('on', 'off');
       toggleMic.classList.add(micEnabled ? 'on' : 'off');
+      toggleMic.textContent = micEnabled ? 'Mic On' : 'Mic Off';
       // HIG-friendly: reflect toggle state for assistive tech
       try { toggleMic.setAttribute('aria-pressed', String(!!micEnabled)); } catch {}
-      try { toggleMic.title = micEnabled ? 'Mute microphone' : 'Unmute microphone'; } catch {}
     }
 
-    if (shareToggle) {
-      // Allow stopping screen share even if disconnected
-      shareToggle.disabled = !connected && !sharing;
-      shareToggle.classList.toggle('danger', sharing);
-      shareToggle.classList.toggle('pulse', sharing);
-      if (shareLabel) {
-        let label = sharing ? 'Stop Sharing' : 'Share';
-        try {
-          if (window.innerWidth <= 380 && sharing) label = 'Stop';
-        } catch {}
-        shareLabel.textContent = label;
-      }
-      try {
-        shareToggle.title = sharing ? 'Stop sharing your screen' : 'Share your screen';
-        shareToggle.setAttribute('aria-pressed', String(!!sharing));
-      } catch {}
+    if (shareScreen) {
+      shareScreen.disabled = sharing || !connected;
+      shareScreen.classList.remove('pulse');
+      shareScreen.textContent = 'Share Screen';
+    }
+    if (stopShare) {
+      stopShare.disabled = !sharing;
+      stopShare.classList.toggle('pulse', sharing);
+      stopShare.textContent = sharing ? 'Sharing… Stop' : 'Stop Share';
+    }
+
+    if (fullscreenShare) {
+      const anyVideo = sharing || remoteVideos.childElementCount > 0 || !!localVideo.srcObject;
+      fullscreenShare.disabled = !anyVideo;
+      fullscreenShare.textContent = isFs ? 'Exit Fullscreen' : 'Fullscreen';
     }
   }
 
@@ -114,9 +115,22 @@ export async function init() {
       else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
     } catch (e) { console.warn('exitFullscreen failed', e); }
   }
-  function toggleFullscreenFor(el) {
+  function findSharedVideoEl() {
+    if (state.sharedPeerId) {
+      const peer = state.peers.get(state.sharedPeerId);
+      if (peer?.videoEl) return peer.videoEl;
+    }
+    const anyRemote = remoteVideos.querySelector('video');
+    if (anyRemote) return anyRemote;
+    if (localVideo?.srcObject) return localVideo;
+    return null;
+  }
+  function toggleFullscreen() {
     if (isFullscreen()) exitFullscreen();
-    else enterFullscreen(el);
+    else {
+      const target = findSharedVideoEl() || document.querySelector('main') || document.documentElement;
+      enterFullscreen(target);
+    }
     setTimeout(updateControls, 0);
   }
 
@@ -138,10 +152,6 @@ export async function init() {
       setStatus('Disconnected');
       state.socket?.disconnect();
       stopScreenTracks();
-      // Stop and clear local media upon leaving
-      try { state.localStream?.getTracks?.().forEach(t => t.stop()); } catch {}
-      try { if (localVideo) localVideo.srcObject = null; } catch {}
-      state.localStream = null;
       updateControls();
     };
 
@@ -150,7 +160,24 @@ export async function init() {
     $('toggleCam').onclick = () => { toggleCamControl(localVideo, updateControls); };
     $('toggleMic').onclick = () => { toggleMicControl(updateControls); };
 
-    const stopShareFlow = () => {
+    $('shareScreen').onclick = async () => {
+      try {
+        const stream = await startScreenShare();
+        try {
+          const hasScreenAudio = !!(stream?.getAudioTracks?.().length);
+          if (!hasScreenAudio) {
+            appendChat({ from: 'system', message: 'No screen audio captured. In Chrome/Edge share a Tab and enable “Share tab audio”. On Windows Entire screen, enable “Share system audio”. On macOS only Tab audio works.', ts: Date.now() });
+          }
+        } catch {}
+        if (state.signaling?.emitScreenShare) state.signaling.emitScreenShare('start');
+        else state.socket?.emit('screen-share', { roomId: state.roomId, action: 'start' });
+        state.sharedPeerId = state.socket?.id || null;
+        updateControls();
+        stream.getVideoTracks()[0].addEventListener('ended', () => { $('stopShare').click(); });
+      } catch (e) { console.warn('Share screen cancelled or failed', e); }
+    };
+
+    $('stopShare').onclick = () => {
       // Switch back to camera on all peers
       try {
         const camTrack = state.localStream?.getVideoTracks?.()[0];
@@ -181,36 +208,9 @@ export async function init() {
       updateControls();
     };
 
-    const shareBtn = $('shareToggle');
-    if (shareBtn) shareBtn.onclick = async () => {
-      if (state.screenStream) { stopShareFlow(); return; }
-      try {
-        const stream = await startScreenShare();
-        try {
-          const hasScreenAudio = !!(stream?.getAudioTracks?.().length);
-          if (!hasScreenAudio) {
-            appendChat({ from: 'system', message: 'No screen audio captured. In Chrome/Edge share a Tab and enable “Share tab audio”. On Windows Entire screen, enable “Share system audio”. On macOS only Tab audio works.', ts: Date.now() });
-          }
-        } catch {}
-        if (state.signaling?.emitScreenShare) state.signaling.emitScreenShare('start');
-        else state.socket?.emit('screen-share', { roomId: state.roomId, action: 'start' });
-        state.sharedPeerId = state.socket?.id || null;
-        updateControls();
-        try { stream.getVideoTracks()[0].addEventListener('ended', () => { stopShareFlow(); }); } catch {}
-      } catch (e) { console.warn('Share screen cancelled or failed', e); }
-    };
-
-    const fsLocal = $('fs-local');
-    if (fsLocal) {
-      const localTile = document.getElementById('localTile');
-      fsLocal.onclick = () => {
-        const t = localTile;
-        const canFs = !!(t && (t.requestFullscreen || t.webkitRequestFullscreen));
-        toggleFullscreenFor(canFs ? t : localVideo);
-      };
-    }
+    const fsBtn = $('fullscreenShare');
+    if (fsBtn) fsBtn.onclick = toggleFullscreen;
     document.addEventListener('fullscreenchange', updateControls);
-    window.addEventListener('resize', () => { try { updateControls(); } catch {} });
 
     const enableBtn = document.getElementById('enableAudioBtn');
     if (enableBtn) {
