@@ -18,13 +18,12 @@ export function createPeerConnection(peerId) {
   const pc = new RTCPeerConnection({ iceServers: state.iceServers });
 
   // Add local tracks in a deterministic order to keep m-line ordering stable
-  let audioSender = null;
   let videoSender = null;
   if (state.localStream) {
     const audios = state.localStream.getAudioTracks ? state.localStream.getAudioTracks() : [];
     const videos = state.localStream.getVideoTracks ? state.localStream.getVideoTracks() : [];
     if (audios[0]) {
-      audioSender = pc.addTrack(audios[0], state.localStream);
+      pc.addTrack(audios[0], state.localStream);
     }
     if (videos[0]) {
       videoSender = pc.addTrack(videos[0], state.localStream);
@@ -51,7 +50,8 @@ export function createPeerConnection(peerId) {
 
   pc.onicecandidate = (ev) => {
     if (ev.candidate) {
-      state.socket.emit('ice-candidate', { to: peerId, candidate: ev.candidate });
+      if (state.signaling?.emitIceCandidate) state.signaling.emitIceCandidate(peerId, ev.candidate);
+      else state.socket.emit('ice-candidate', { to: peerId, candidate: ev.candidate });
     }
   };
 
@@ -63,7 +63,8 @@ export function createPeerConnection(peerId) {
       peer.makingOffer = true;
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      state.socket.emit('offer', { to: peerId, sdp: offer.sdp });
+      if (state.signaling?.emitOffer) state.signaling.emitOffer(peerId, offer.sdp);
+      else state.socket.emit('offer', { to: peerId, sdp: offer.sdp });
     } catch (e) {
       console.warn('negotiationneeded offer failed', e);
     } finally {
@@ -74,7 +75,7 @@ export function createPeerConnection(peerId) {
   pc.ontrack = (ev) => {
     let peer = state.peers.get(peerId);
     if (!peer) {
-      peer = { pc, streams: {}, videoEl: null, screenAudioSender: null };
+      peer = { pc, videoEl: null, screenAudioSender: null };
       state.peers.set(peerId, peer);
     }
     if (!peer.videoEl) {
@@ -111,7 +112,7 @@ export function createPeerConnection(peerId) {
   };
 
   const polite = (state.socket?.id || '') < peerId;
-  state.peers.set(peerId, { pc, streams: {}, videoEl: null, screenAudioSender: screenAudioSender || null, makingOffer: false, ignoreOffer: false, isSettingRemoteAnswerPending: false, polite });
+  state.peers.set(peerId, { pc, videoEl: null, screenAudioSender: screenAudioSender || null, makingOffer: false, polite });
   const p = state.peers.get(peerId);
   if (screenAudioSender && p) p.screenAudioSender = screenAudioSender;
   return pc;
@@ -120,7 +121,6 @@ export function createPeerConnection(peerId) {
 export function removePeer(peerId) {
   const peer = state.peers.get(peerId);
   if (!peer) return;
-  try { peer.pc.getSenders().forEach((s) => { try { s.track && s.track.stop && s.track.readyState === 'ended'; } catch {} }); } catch {}
   try { peer.pc.close(); } catch {}
   if (peer.videoEl?.parentElement) peer.videoEl.parentElement.removeChild(peer.videoEl);
   state.peers.delete(peerId);
@@ -135,32 +135,11 @@ export async function callPeer(peerId) {
     peer.makingOffer = true;
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    state.socket.emit('offer', { to: peerId, sdp: offer.sdp });
+    if (state.signaling?.emitOffer) state.signaling.emitOffer(peerId, offer.sdp);
+    else state.socket.emit('offer', { to: peerId, sdp: offer.sdp });
   } catch (e) {
     console.warn('callPeer offer failed', e);
   } finally {
     peer.makingOffer = false;
-  }
-}
-
-export function addLocalTracksToAll() {
-  for (const [peerId, peer] of state.peers.entries()) {
-    const senders = peer.pc.getSenders();
-    if (state.localStream) {
-      const audios = state.localStream.getAudioTracks ? state.localStream.getAudioTracks() : [];
-      const videos = state.localStream.getVideoTracks ? state.localStream.getVideoTracks() : [];
-      // Audio first
-      for (const track of audios) {
-        const sender = senders.find((s) => s.track && s.track.kind === 'audio');
-        if (sender) sender.replaceTrack(track);
-        else peer.pc.addTrack(track, state.localStream);
-      }
-      // Then video
-      for (const track of videos) {
-        const sender = senders.find((s) => s.track && s.track.kind === 'video');
-        if (sender) sender.replaceTrack(track);
-        else peer.pc.addTrack(track, state.localStream);
-      }
-    }
   }
 }

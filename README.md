@@ -49,6 +49,8 @@ docker run --rm -p 3000:3000 mirotalk
 Notes:
 - The client uses native ES module imports; no bundler is required.
 - Autoplay and iOS/Safari: videos use `playsInline`, and an explicit enable‑audio button is shown when the browser blocks autoplay with sound.
+- Platform caveats:
+  - iOS Safari cannot share the screen from web pages (receive/watch only). Desktop Safari supports screen share with the usual permission prompts.
 
 ## License
 MIT (or your preferred license)

@@ -1,7 +1,7 @@
 import { state } from '../core/state.js';
 import { startPipComposite } from './pipComposer.js';
 
-export function replaceVideoTrackForAll(newVideoTrack) {
+function replaceVideoTrackForAll(newVideoTrack) {
   if (!newVideoTrack) return;
   for (const [, peer] of state.peers.entries()) {
     const sender = peer.pc.getSenders().find((s) => s.track && s.track.kind === 'video');
@@ -19,7 +19,7 @@ export function getScreenAudioTrack() {
   return state.screenStream?.getAudioTracks?.()[0] || null;
 }
 
-export function addScreenAudioToAll() {
+function addScreenAudioToAll() {
   const audio = getScreenAudioTrack();
   if (!audio) return;
   try { if ('contentHint' in audio) audio.contentHint = 'music'; } catch {}
@@ -35,20 +35,7 @@ export function addScreenAudioToAll() {
   }
 }
 
-export function removeScreenAudioFromAll() {
-  for (const [, peer] of state.peers.entries()) {
-    const sender = peer.screenAudioSender;
-    if (!sender) continue;
-    try {
-      peer.pc.removeTrack(sender);
-    } catch (e) {
-      console.warn('removeTrack(screen audio) failed', e);
-    }
-    peer.screenAudioSender = null;
-  }
-}
-
-export function addScreenTracksToAll() {
+function addScreenTracksToAll() {
   // Replace current outbound video with composite (if available) otherwise raw screen. Keep mic as-is.
   if (!state.screenStream) return;
   const video = state.compositeTrack || state.screenStream.getVideoTracks?.()[0] || null;

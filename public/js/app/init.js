@@ -6,7 +6,7 @@ import { createChat } from '../ui/chat.js';
 import { connect as connectSignaling } from '../signaling/socket.js';
 import { initLocalMedia as initLocalMediaModule, toggleCam as toggleCamControl, toggleMic as toggleMicControl } from '../media/localMedia.js';
 import { startScreenShare, stopScreenTracks } from '../media/screenShare.js';
-import { initPeerManager, createPeerConnection, removePeer, callPeer, addLocalTracksToAll } from '../rtc/peerManager.js';
+import { initPeerManager, createPeerConnection, removePeer, callPeer } from '../rtc/peerManager.js';
 
 export async function init() {
   const statusEl = $('status');
@@ -22,7 +22,11 @@ export async function init() {
     inputEl: chatInputEl,
     sendBtn: sendChatBtn,
     getSelfId: () => state.socket?.id,
-    onSend: (text) => state.socket?.emit('chat', { roomId: state.roomId, message: text })
+    onSend: (text) => {
+      // Prefer signaling wrapper if available; fall back to raw socket
+      if (state.signaling?.sendChat) state.signaling.sendChat(text);
+      else state.socket?.emit('chat', { roomId: state.roomId, message: text });
+    }
   });
 
   // Initialize peer manager (handles remote video elements and autoplay UI)
@@ -137,7 +141,8 @@ export async function init() {
 
     $('leaveBtn').onclick = () => {
       if (state.roomId) {
-        state.socket?.emit('leave');
+        if (state.signaling?.leave) state.signaling.leave();
+        else state.socket?.emit('leave');
       }
       for (const id of [...state.peers.keys()]) removePeer(id);
       setStatus('Disconnected');
@@ -160,7 +165,8 @@ export async function init() {
             appendChat({ from: 'system', message: 'No screen audio captured. In Chrome/Edge share a Tab and enable “Share tab audio”. On Windows Entire screen, enable “Share system audio”. On macOS only Tab audio works.', ts: Date.now() });
           }
         } catch {}
-        state.socket?.emit('screen-share', { roomId: state.roomId, action: 'start' });
+        if (state.signaling?.emitScreenShare) state.signaling.emitScreenShare('start');
+        else state.socket?.emit('screen-share', { roomId: state.roomId, action: 'start' });
         state.sharedPeerId = state.socket?.id || null;
         updateControls();
         stream.getVideoTracks()[0].addEventListener('ended', () => { $('stopShare').click(); });
@@ -192,7 +198,8 @@ export async function init() {
       } catch {}
 
       stopScreenTracks();
-      state.socket?.emit('screen-share', { roomId: state.roomId, action: 'stop' });
+      if (state.signaling?.emitScreenShare) state.signaling.emitScreenShare('stop');
+      else state.socket?.emit('screen-share', { roomId: state.roomId, action: 'stop' });
       if (state.sharedPeerId === state.socket?.id) state.sharedPeerId = null;
       updateControls();
     };
@@ -209,11 +216,18 @@ export async function init() {
         hideEnableAudioUI();
       };
     }
+
+    // Global one-time gesture to unlock audio and resume playback (convenience)
+    document.addEventListener('click', () => {
+      unlockAudio();
+      resumeAllPlayback();
+      hideEnableAudioUI();
+    }, { once: true });
   }
 
   function connectSocket() {
     if (state.socket) state.socket.disconnect();
-    const { socket } = connectSignaling({
+    const signaling = connectSignaling({
       roomId: state.roomId,
       displayName: state.displayName,
       handlers: {
@@ -235,7 +249,8 @@ export async function init() {
             await pc.setRemoteDescription(offer);
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-            state.socket.emit('answer', { to: from, sdp: answer.sdp });
+            if (state.signaling?.emitAnswer) state.signaling.emitAnswer(from, answer.sdp);
+            else state.socket.emit('answer', { to: from, sdp: answer.sdp });
           } catch (e) { console.warn('Error handling remote offer', e); }
         },
         onAnswer: async ({ from, sdp }) => {
@@ -261,7 +276,8 @@ export async function init() {
         onDisconnect: () => { setStatus('Disconnected'); updateControls(); },
       },
     });
-    state.socket = socket;
+    state.signaling = signaling;
+    state.socket = signaling.socket;
   }
 
   // Wire UI and attempt local media for preview
