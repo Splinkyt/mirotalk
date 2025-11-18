@@ -79,16 +79,45 @@ export function createPeerConnection(peerId) {
   pc.ontrack = (ev) => {
     let peer = state.peers.get(peerId);
     if (!peer) {
-      peer = { pc, videoEl: null, screenAudioSender: null };
+      peer = { pc, videoEl: null, tileEl: null, screenAudioSender: null };
       state.peers.set(peerId, peer);
     }
     if (!peer.videoEl) {
+      // Create tile wrapper with a per‑tile fullscreen button
+      const tile = document.createElement('div');
+      tile.className = 'tile';
       const videoEl = document.createElement('video');
       videoEl.autoplay = true;
       videoEl.playsInline = true;
-      videoEl.id = `remote-${peerId}`;
-      config.remoteContainerEl?.appendChild(videoEl);
+      // Sanitize id to be CSS/DOM-safe
+      try {
+        const safe = `remote-${String(peerId).replace(/[^A-Za-z0-9_-]/g, '_')}`;
+        videoEl.id = safe;
+      } catch {
+        videoEl.id = `remote-${Date.now()}`;
+      }
+      tile.appendChild(videoEl);
+      const actions = document.createElement('div');
+      actions.className = 'tile-actions';
+      const fsBtn = document.createElement('button');
+      fsBtn.className = 'secondary fs-btn';
+      fsBtn.title = 'Fullscreen';
+      fsBtn.setAttribute('aria-label', 'Fullscreen');
+      fsBtn.type = 'button';
+      fsBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3H3v6M15 3h6v6M21 15v6h-6M9 21H3v-6" /></svg>';
+      fsBtn.onclick = () => {
+        try {
+          const canTile = !!(tile.requestFullscreen || tile.webkitRequestFullscreen);
+          const target = canTile ? tile : videoEl;
+          if (target.requestFullscreen) target.requestFullscreen();
+          else if (target.webkitRequestFullscreen) target.webkitRequestFullscreen();
+        } catch (e) { console.warn('requestFullscreen failed for remote tile', e); }
+      };
+      actions.appendChild(fsBtn);
+      tile.appendChild(actions);
+      config.remoteContainerEl?.appendChild(tile);
       peer.videoEl = videoEl;
+      peer.tileEl = tile;
     }
     const [stream] = ev.streams;
     const v = peer.videoEl;
@@ -170,7 +199,8 @@ export function removePeer(peerId) {
   const peer = state.peers.get(peerId);
   if (!peer) return;
   try { peer.pc.close(); } catch {}
-  if (peer.videoEl?.parentElement) peer.videoEl.parentElement.removeChild(peer.videoEl);
+  if (peer.tileEl?.parentElement) peer.tileEl.parentElement.removeChild(peer.tileEl);
+  else if (peer.videoEl?.parentElement) peer.videoEl.parentElement.removeChild(peer.videoEl);
   state.peers.delete(peerId);
 }
 
