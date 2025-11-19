@@ -128,15 +128,15 @@
 
     .row { display: flex; gap: 8px; }
     video { width: 100%; background: var(--input-bg); border-radius: var(--radius); }
-    .videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+    .videos { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; align-items: start; }
     .badge { display: inline-block; padding: 2px 6px; font-size: 12px; background: var(--secondary); border-radius: 999px; }
     .controls { display: none; }
     .chat { height: 200px; overflow: auto; background: var(--input-bg); padding: 8px; border-radius: 6px; }
     .muted { opacity: 0.65; }
 
     /* Video tile with per-tile fullscreen button */
-    .video-tile { position: relative; border-radius: var(--radius); overflow: hidden; background: var(--input-bg); }
-    .video-tile video { display: block; border-radius: 0; }
+    .video-tile { position: relative; border-radius: var(--radius); overflow: hidden; background: var(--input-bg); aspect-ratio: 16 / 9; }
+    .video-tile video { display: block; border-radius: 0; width: 100%; height: 100%; object-fit: cover; }
     .tile-fs {
       position: absolute; right: 8px; bottom: 8px; width: 36px; height: 36px;
       border-radius: 10px; background: var(--secondary); border-color: var(--secondary-600);
@@ -204,38 +204,34 @@
 
     <section class="panel">
       <h3>Call</h3>
-      <div class="row">
-        <div style="flex:1;">
-          <label>Local</label>
-          <div class="video-tile" id="localTile">
-            <video id="localVideo" autoplay playsinline muted aria-label="Local video preview"></video>
-            <button class="tile-fs" id="localFsBtn" aria-label="Fullscreen" title="Fullscreen">
-              <!-- Fullscreen icon -->
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M9 3H5a2 2 0 0 0-2 2v4"></path>
-                <polyline points="9 3 9 9 3 9"></polyline>
-                <path d="M15 21h4a2 2 0 0 0 2-2v-4"></path>
-                <polyline points="15 21 15 15 21 15"></polyline>
-                <path d="M21 9V5a2 2 0 0 0-2-2h-4"></path>
-                <polyline points="15 9 21 9 21 3"></polyline>
-                <path d="M3 15v4a2 2 0 0 0 2 2h4"></path>
-                <polyline points="3 15 9 15 9 21"></polyline>
-              </svg>
-            </button>
-          </div>
-          <!-- Hidden legacy share controls kept for logic reuse -->
-          <div style="display:none;">
-            <button id="shareScreen">Share Screen</button>
-            <button id="stopShare">Stop Share</button>
-          </div>
-        </div>
+      <!-- Hidden legacy share controls kept for logic reuse -->
+      <div style="display:none;">
+        <button id="shareScreen">Share Screen</button>
+        <button id="stopShare">Stop Share</button>
       </div>
-      <label id="remotesLabel" style="margin-top:12px;">Remotes</label>
+      <label id="participantsLabel" style="margin-top:12px;">Participants</label>
       <div class="row" style="margin:6px 0; align-items:center;">
         <button id="enableAudioBtn" class="secondary" style="width:auto; display:none;">Enable Audio</button>
         <span id="enableAudioHint" style="font-size:12px; color:#9ca3af; display:none;">Click to allow sound on this page (desktop autoplay)</span>
       </div>
-      <div id="remoteVideos" class="videos" role="region" aria-labelledby="remotesLabel"></div>
+      <div id="remoteVideos" class="videos" role="region" aria-labelledby="participantsLabel">
+        <div class="video-tile" id="localTile">
+          <video id="localVideo" autoplay playsinline muted aria-label="Local video preview"></video>
+          <button class="tile-fs" id="localFsBtn" aria-label="Fullscreen" title="Fullscreen">
+            <!-- Fullscreen icon -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 3H5a2 2 0 0 0-2 2v4"></path>
+              <polyline points="9 3 9 9 3 9"></polyline>
+              <path d="M15 21h4a2 2 0 0 0 2-2v-4"></path>
+              <polyline points="15 21 15 15 21 15"></polyline>
+              <path d="M21 9V5a2 2 0 0 0-2-2h-4"></path>
+              <polyline points="15 9 21 9 21 3"></polyline>
+              <path d="M3 15v4a2 2 0 0 0 2 2h4"></path>
+              <polyline points="3 15 9 15 9 21"></polyline>
+            </svg>
+          </button>
+        </div>
+      </div>
     </section>
   </main>
 
