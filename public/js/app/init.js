@@ -136,6 +136,10 @@ export async function init() {
     $('joinBtn').onclick = async () => {
       state.displayName = $('displayName').value || 'Guest';
       state.roomId = $('roomId').value || 'demo';
+      // Hide Join Screen
+      const joinScreen = document.getElementById('join-screen');
+      if (joinScreen) joinScreen.classList.add('hidden');
+      
       await initLocalMediaModule(localVideo, updateControls);
       connectSocket();
       updateControls();
@@ -151,6 +155,10 @@ export async function init() {
       state.socket?.disconnect();
       stopScreenTracks();
       updateControls();
+      
+      // Show Join Screen
+      const joinScreen = document.getElementById('join-screen');
+      if (joinScreen) joinScreen.classList.remove('hidden');
     };
 
     // Chat send is handled by chat module initialization

@@ -1,133 +1,231 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="dark light" />
-  <title>MiroTalk WebRTC MVP</title>
-  <link rel="stylesheet" href="css/style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MiroTalk Glass</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/style.css">
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            overflow: hidden;
+        }
+        /* Utility for hidden elements logic */
+        .hidden { display: none !important; }
+    </style>
 </head>
-<body>
-  <header>
-    <div class="row" style="align-items:center; justify-content: space-between;">
-      <div>
-        <strong>MiroTalk</strong> <span class="badge">MVP</span>
-      </div>
-      <div id="status" role="status" aria-live="polite">Disconnected</div>
-    </div>
-  </header>
-  <main role="main">
-    <section class="panel">
-      <h3>Join Room</h3>
-      <label for="displayName">Display Name</label>
-      <input id="displayName" placeholder="Your name" autocomplete="name" />
-      <label for="roomId">Room ID</label>
-      <input id="roomId" placeholder="e.g. demo" autocomplete="off" />
-      <div class="row" style="margin-top:8px;">
-        <button id="joinBtn">Join</button>
-        <button id="leaveBtn" class="danger">Leave</button>
-      </div>
+<body class="h-screen w-screen animated-bg text-white selection:bg-pink-500 selection:text-white">
 
-      <h3 style="margin-top:16px;">Chat</h3>
-      <div id="chatLog" class="chat" role="log" aria-live="polite" aria-relevant="additions"></div>
-      <div class="row" style="margin-top:6px;">
-        <input id="chatInput" placeholder="Type a message..." aria-label="Chat message" />
-        <button id="sendChat" class="secondary" style="width:auto;">Send</button>
-      </div>
-    </section>
-
-    <section class="panel">
-      <h3>Call</h3>
-      <div class="row">
-        <div style="flex:1;">
-          <label>Local</label>
-          <div class="video-tile" id="localTile">
-            <video id="localVideo" autoplay playsinline muted aria-label="Local video preview"></video>
-            <button class="tile-fs" id="localFsBtn" aria-label="Fullscreen" title="Fullscreen">
-              <!-- Fullscreen icon -->
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M9 3H5a2 2 0 0 0-2 2v4"></path>
-                <polyline points="9 3 9 9 3 9"></polyline>
-                <path d="M15 21h4a2 2 0 0 0 2-2v-4"></path>
-                <polyline points="15 21 15 15 21 15"></polyline>
-                <path d="M21 9V5a2 2 0 0 0-2-2h-4"></path>
-                <polyline points="15 9 21 9 21 3"></polyline>
-                <path d="M3 15v4a2 2 0 0 0 2 2h4"></path>
-                <polyline points="3 15 9 15 9 21"></polyline>
-              </svg>
-            </button>
-          </div>
-          <!-- Hidden legacy share controls kept for logic reuse -->
-          <div style="display:none;">
-            <button id="shareScreen">Share Screen</button>
-            <button id="stopShare">Stop Share</button>
-          </div>
+    <!-- Join Room Overlay -->
+    <div id="join-screen" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-3xl transition-all duration-500">
+        <div class="glass-panel p-8 rounded-3xl w-full max-w-md flex flex-col gap-6 relative overflow-hidden">
+            <!-- decorative mesh behind -->
+            <div class="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 pointer-events-none"></div>
+            
+            <div class="relative z-10 flex flex-col items-center gap-2">
+                <div class="glass-panel-light p-4 rounded-2xl mb-2">
+                    <i class="fa-solid fa-layer-group text-3xl text-blue-400"></i>
+                </div>
+                <h1 class="text-2xl font-bold tracking-wide">MiroTalk <span class="text-sm font-normal opacity-70">Glass</span></h1>
+                <p class="text-sm text-gray-400">Enter your details to join</p>
+            </div>
+    
+            <div class="relative z-10 flex flex-col gap-4">
+                <div>
+                    <label class="text-xs font-medium text-gray-400 ml-1 mb-1 block">Display Name</label>
+                    <input id="displayName" type="text" placeholder="Your Name" class="glass-input w-full rounded-xl py-3 px-4 focus:ring-2 focus:ring-blue-500/50">
+                </div>
+                <div>
+                    <label class="text-xs font-medium text-gray-400 ml-1 mb-1 block">Room ID</label>
+                    <input id="roomId" type="text" placeholder="room-id" class="glass-input w-full rounded-xl py-3 px-4 focus:ring-2 focus:ring-blue-500/50">
+                </div>
+                <button id="joinBtn" class="mt-2 w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-lg shadow-blue-500/25 transition-all active:scale-95">
+                    Join Room
+                </button>
+            </div>
         </div>
-      </div>
-      <label id="remotesLabel" style="margin-top:12px;">Remotes</label>
-      <div class="row" style="margin:6px 0; align-items:center;">
-        <button id="enableAudioBtn" class="secondary" style="width:auto; display:none;">Enable Audio</button>
-        <span id="enableAudioHint" style="font-size:12px; color:#9ca3af; display:none;">Click to allow sound on this page (desktop autoplay)</span>
-      </div>
-      <div id="remoteVideos" class="videos" role="region" aria-labelledby="remotesLabel"></div>
-    </section>
-  </main>
-
-  <!-- Bottom toolbar (full-width) -->
-  <div class="call-toolbar-wrap" role="group" aria-label="Call controls">
-    <div class="call-toolbar">
-      <button id="toggleCam" class="btn-icon off" aria-pressed="false" aria-label="Toggle camera" title="Toggle camera">
-        <!-- camera on -->
-        <svg class="icon on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M21 15V9a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2z"></path>
-          <polygon points="16 12 22 15 22 9 16 12"></polygon>
-        </svg>
-        <!-- camera off -->
-        <svg class="icon off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M1 1l22 22"></path>
-          <path d="M16 12l5 3V9l-5 3z"></path>
-          <path d="M7 7h9a2 2 0 0 1 2 2v6"></path>
-          <path d="M3 3h2a2 2 0 0 1 2 2v9"></path>
-          <rect x="3" y="9" width="10" height="8" rx="2"></rect>
-        </svg>
-      </button>
-
-      <button id="toggleMic" class="btn-icon off" aria-pressed="false" aria-label="Toggle microphone" title="Toggle microphone">
-        <!-- mic on -->
-        <svg class="icon on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 1a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V4a3 3 0 0 1 3-3z"></path>
-          <path d="M19 10a7 7 0 0 1-14 0"></path>
-          <line x1="12" y1="17" x2="12" y2="23"></line>
-          <line x1="8" y1="23" x2="16" y2="23"></line>
-        </svg>
-        <!-- mic off -->
-        <svg class="icon off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <line x1="1" y1="1" x2="23" y2="23"></line>
-          <path d="M15 11V4a3 3 0 0 0-6 0v3"></path>
-          <path d="M9 10v1a3 3 0 0 0 5.12 2.12"></path>
-          <path d="M19 10a7 7 0 0 1-14 0"></path>
-          <line x1="12" y1="17" x2="12" y2="23"></line>
-          <line x1="8" y1="23" x2="16" y2="23"></line>
-        </svg>
-      </button>
-
-      <button id="shareToggle" class="btn-icon" aria-label="Share screen" title="Share screen">
-        <!-- share icon -->
-        <svg class="icon share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="14" rx="2"></rect>
-          <path d="M12 8v6"></path>
-          <path d="M9 11l3-3 3 3"></path>
-        </svg>
-        <!-- stop share icon -->
-        <svg class="icon stop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none;">
-          <rect x="3" y="4" width="18" height="14" rx="2"></rect>
-          <rect x="9" y="9" width="6" height="6"></rect>
-        </svg>
-      </button>
     </div>
-  </div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="js/app/main.js" type="module"></script>
+    <!-- App Container -->
+    <div class="relative w-full h-full flex flex-col p-4 md:p-6 gap-4">
+
+        <!-- Header / Status Bar -->
+        <header class="flex justify-between items-center z-10 shrink-0 px-2">
+            <div class="flex items-center gap-3">
+                <div class="glass-panel-light p-2 rounded-xl flex items-center justify-center">
+                    <i class="fa-solid fa-layer-group text-blue-400"></i>
+                </div>
+                <div>
+                    <h1 class="font-semibold text-lg tracking-wide">MiroTalk <span class="text-xs font-light opacity-70 bg-white/10 px-2 py-0.5 rounded-full ml-2">MVP</span></h1>
+                    <div class="flex items-center gap-2 text-xs text-gray-400">
+                        <span id="status" class="text-gray-300">Disconnected</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Header Actions -->
+            <div class="flex gap-3">
+                <button class="glass-panel-light h-10 w-10 rounded-full flex items-center justify-center hover:bg-white/20 transition-all btn-hover" title="Settings">
+                    <i class="fa-solid fa-gear"></i>
+                </button>
+                <div class="glass-panel px-4 py-2 rounded-full flex items-center gap-3">
+                    <span class="text-sm font-medium">04:20</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 flex gap-4 overflow-hidden relative">
+            
+            <!-- Video Grid Area -->
+            <div id="video-grid" class="flex-1 flex flex-col gap-4 relative transition-all duration-300 ease-in-out">
+                
+                <!-- Main Speaker / Remote Videos Container -->
+                <div class="relative flex-1 glass-panel rounded-3xl overflow-hidden group shadow-2xl p-2">
+                    <!-- This is where we inject remote videos -->
+                    <div id="remoteVideos"></div>
+                </div>
+
+                <!-- Secondary Participants (Horizontal Strip) -->
+                <div class="h-32 hidden md:flex gap-4 shrink-0 overflow-x-auto pb-2 px-1 scrollbar-hide">
+                    <!-- Self View -->
+                    <div id="localTile" class="relative w-48 rounded-2xl overflow-hidden glass-panel shrink-0 border-2 border-blue-500/30">
+                        <video id="localVideo" autoplay playsinline muted class="w-full h-full object-cover"></video>
+                        <span class="absolute bottom-2 left-2 text-xs bg-black/50 px-2 py-0.5 rounded-lg">You</span>
+                        <!-- Fullscreen button for local tile -->
+                        <button id="localFsBtn" class="tile-fs"><i class="fa-solid fa-expand"></i></button>
+                    </div>
+                    
+                    <!-- Placeholder for other participants or special views if needed -->
+                </div>
+            </div>
+
+            <!-- Side Panel (Chat/Info) - Toggleable -->
+            <aside id="side-panel" class="w-80 glass-panel rounded-3xl flex flex-col transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] translate-x-0 ml-2">
+                
+                <!-- Panel Tabs -->
+                <div class="flex p-1 m-3 bg-black/20 rounded-xl">
+                    <button class="flex-1 py-1.5 rounded-lg text-sm font-medium bg-white/10 shadow-sm transition-all text-white">Chat</button>
+                    <button class="flex-1 py-1.5 rounded-lg text-sm font-medium text-gray-400 hover:text-white transition-all">People</button>
+                </div>
+
+                <!-- Chat Area -->
+                <div id="chatLog" class="flex-1 overflow-y-auto p-4 space-y-4 glass-scroll">
+                    <!-- Chat messages injected here -->
+                </div>
+
+                <!-- Chat Input -->
+                <div class="p-4 pt-2 border-t border-white/5">
+                    <div class="relative">
+                        <input type="text" id="chatInput" placeholder="Type a message..." class="w-full glass-input rounded-xl py-3 pl-4 pr-10 text-sm placeholder-gray-400 focus:ring-2 focus:ring-blue-500/50">
+                        <button id="sendChat" class="absolute right-2 top-2 h-7 w-7 bg-blue-500 rounded-lg flex items-center justify-center text-white hover:bg-blue-400 transition-colors">
+                            <i class="fa-solid fa-paper-plane text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+            </aside>
+        </main>
+
+        <!-- Floating Control Dock (Bottom Center) -->
+        <div class="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50">
+            <div class="glass-dock px-6 py-3 rounded-full flex items-center gap-4 sm:gap-6 shadow-2xl transition-all hover:scale-105 duration-300">
+                
+                <!-- Mic Toggle -->
+                <button id="toggleMic" class="h-12 w-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all btn-hover group relative" title="Mute">
+                    <!-- Icons handled by init.js class switching, but we set defaults here -->
+                    <i class="fa-solid fa-microphone text-lg group-hover:scale-110 transition-transform icon on"></i>
+                    <i class="fa-solid fa-microphone-slash text-lg group-hover:scale-110 transition-transform icon off" style="display:none"></i>
+                </button>
+                
+                <!-- Cam Toggle -->
+                <button id="toggleCam" class="h-12 w-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all btn-hover group relative" title="Stop Video">
+                    <i class="fa-solid fa-video text-lg group-hover:scale-110 transition-transform icon on"></i>
+                    <i class="fa-solid fa-video-slash text-lg group-hover:scale-110 transition-transform icon off" style="display:none"></i>
+                </button>
+
+                <!-- Share Screen (Primary Action) -->
+                <!-- ID shareToggle is used by init.js to trigger hidden share buttons -->
+                <button id="shareToggle" class="h-14 w-14 rounded-2xl bg-blue-600/80 hover:bg-blue-500 flex items-center justify-center text-white transition-all btn-hover shadow-lg shadow-blue-500/30 group relative mx-2">
+                    <i class="fa-solid fa-arrow-up-from-bracket text-xl group-hover:-translate-y-1 transition-transform icon share"></i>
+                    <i class="fa-solid fa-xmark text-xl group-hover:-translate-y-1 transition-transform icon stop" style="display:none"></i>
+                </button>
+
+                <!-- Chat Toggle (UI Only) -->
+                <button onclick="toggleChat()" class="h-12 w-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all btn-hover group relative" id="chatToggleBtn">
+                    <div class="relative">
+                        <i class="fa-regular fa-message text-lg group-hover:scale-110 transition-transform"></i>
+                    </div>
+                </button>
+
+                <div class="w-px h-8 bg-white/10 mx-1"></div>
+
+                <!-- Leave Button -->
+                <button id="leaveBtn" class="h-12 w-12 rounded-full bg-red-500/80 hover:bg-red-600 flex items-center justify-center text-white transition-all btn-hover shadow-lg shadow-red-500/20" title="Leave">
+                    <i class="fa-solid fa-phone-slash text-lg"></i>
+                </button>
+
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Hidden elements for legacy init.js logic -->
+    <div style="display:none;">
+        <button id="shareScreen">Share Screen</button>
+        <button id="stopShare">Stop Share</button>
+        <!-- enableAudioBtn for autoplay policy -->
+        <button id="enableAudioBtn">Enable Audio</button> 
+    </div>
+
+    <!-- UI Scripts -->
+    <script>
+        // Toggle Chat Logic
+        const sidePanel = document.getElementById('side-panel');
+        const chatToggleBtn = document.getElementById('chatToggleBtn');
+        const videoGrid = document.getElementById('video-grid');
+        let isChatOpen = true;
+
+        function toggleChat() {
+            if (isChatOpen) {
+                // Close Chat
+                sidePanel.style.width = '0px';
+                sidePanel.style.opacity = '0';
+                sidePanel.style.marginLeft = '0';
+                sidePanel.style.padding = '0';
+                if(chatToggleBtn) {
+                    chatToggleBtn.classList.remove('bg-white/20');
+                    chatToggleBtn.classList.add('bg-white/10');
+                }
+            } else {
+                // Open Chat
+                sidePanel.style.width = '20rem'; // w-80 equivalent
+                sidePanel.style.opacity = '1';
+                sidePanel.style.marginLeft = '0.5rem';
+                sidePanel.classList.add('p-0'); 
+                if(chatToggleBtn) {
+                    chatToggleBtn.classList.add('bg-white/20');
+                }
+            }
+            isChatOpen = !isChatOpen;
+        }
+        
+        // Initial chat state adjustments if needed
+    </script>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="js/app/main.js" type="module"></script>
 </body>
 </html>
