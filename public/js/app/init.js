@@ -134,15 +134,22 @@ export async function init() {
 
   function wireUI() {
     $('joinBtn').onclick = async () => {
-      state.displayName = $('displayName').value || 'Guest';
-      state.roomId = $('roomId').value || 'demo';
-      // Hide Join Screen
       const joinScreen = document.getElementById('join-screen');
-      if (joinScreen) joinScreen.classList.add('hidden');
-      
-      await initLocalMediaModule(localVideo, updateControls);
-      connectSocket();
-      updateControls();
+      try {
+        state.displayName = $('displayName').value || 'Guest';
+        state.roomId = $('roomId').value || 'demo';
+        
+        // Hide Join Screen temporarily (optimistic)
+        if (joinScreen) joinScreen.classList.add('hidden');
+        
+        await initLocalMediaModule(localVideo, updateControls);
+        connectSocket();
+        updateControls();
+      } catch (e) {
+        console.error('Join failed', e);
+        // Restore Join Screen on error
+        if (joinScreen) joinScreen.classList.remove('hidden');
+      }
     };
 
     $('leaveBtn').onclick = () => {
