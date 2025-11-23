@@ -170,9 +170,10 @@
                 </button>
 
                 <!-- Chat Toggle (UI Only) -->
-                <button onclick="toggleChat()" class="h-12 w-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all btn-hover group relative" id="chatToggleBtn">
+                <button onclick="toggleChat()" class="h-12 w-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all btn-hover group relative on" id="chatToggleBtn">
                     <div class="relative">
-                        <i class="fa-regular fa-message text-lg group-hover:scale-110 transition-transform"></i>
+                        <i class="fa-regular fa-comment-dots text-lg group-hover:scale-110 transition-transform icon on"></i>
+                        <i class="fa-solid fa-comment-slash text-lg group-hover:scale-110 transition-transform icon off" style="display:none"></i>
                     </div>
                 </button>
 
@@ -210,8 +211,8 @@
                 sidePanel.style.marginLeft = '0';
                 sidePanel.style.padding = '0';
                 if(chatToggleBtn) {
-                    chatToggleBtn.classList.remove('bg-white/20');
-                    chatToggleBtn.classList.add('bg-white/10');
+                    chatToggleBtn.classList.remove('on');
+                    chatToggleBtn.classList.add('off');
                 }
             } else {
                 // Open Chat
@@ -220,7 +221,8 @@
                 sidePanel.style.marginLeft = '0.5rem';
                 sidePanel.classList.add('p-0'); 
                 if(chatToggleBtn) {
-                    chatToggleBtn.classList.add('bg-white/20');
+                    chatToggleBtn.classList.remove('off');
+                    chatToggleBtn.classList.add('on');
                 }
             }
             isChatOpen = !isChatOpen;

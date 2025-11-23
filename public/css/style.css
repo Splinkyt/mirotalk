@@ -153,3 +153,46 @@
 
 /* Utility */
 .hidden { display: none !important; }
+
+/* Toggle Button States & Icons */
+button .icon { display: inline-block; } /* Default fallback */
+
+/* When button is ON: show .on icon, hide .off icon */
+button.on .icon.on { display: inline-block !important; }
+button.on .icon.off { display: none !important; }
+
+/* When button is OFF: show .off icon, hide .on icon */
+button.off .icon.on { display: none !important; }
+button.off .icon.off { display: inline-block !important; }
+
+/* Red styling for Muted/Stopped states (Mic/Cam) */
+button#toggleMic.off, button#toggleCam.off {
+    background-color: rgba(239, 68, 68, 0.8); /* Red-500 */
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+}
+button#toggleMic.off:hover, button#toggleCam.off:hover {
+    background-color: rgba(220, 38, 38, 1); /* Red-600 */
+}
+
+/* Chat Button Specifics */
+/* Open (On) -> Active highlight */
+button#chatToggleBtn.on {
+    background-color: rgba(255, 255, 255, 0.25);
+    border-color: rgba(255, 255, 255, 0.4);
+}
+/* Closed (Off) -> Default glass (already set by class, just ensure no red) */
+button#chatToggleBtn.off {
+    /* Keep default glass style */
+}
+
+/* Share Toggle Logic (uses .is-sharing / .danger from init.js) */
+button.is-sharing .icon.share { display: none !important; }
+button.is-sharing .icon.stop { display: inline-block !important; }
+
+button.danger {
+    background-color: rgba(239, 68, 68, 0.8) !important;
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+}
+button.danger:hover {
+    background-color: rgba(220, 38, 38, 1) !important;
+}
