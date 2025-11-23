@@ -78,21 +78,6 @@
     100% { background-position: 0% 50%; }
 }
 
-/* Video Container Aspect Ratio Fix */
-.video-wrapper {
-    position: relative;
-    padding-bottom: 56.25%; /* 16:9 */
-    height: 0;
-    overflow: hidden;
-}
-.video-wrapper img, .video-wrapper video {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-}
 
 /* Adapter classes for existing JS logic */
 .video-tile {

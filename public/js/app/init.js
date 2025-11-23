@@ -173,7 +173,10 @@ export async function init() {
     $('toggleCam').onclick = () => { toggleCamControl(localVideo, updateControls); };
     $('toggleMic').onclick = () => { toggleMicControl(updateControls); };
 
+    let isSharingStarting = false;
     $('shareScreen').onclick = async () => {
+      if (isSharingStarting) return;
+      isSharingStarting = true;
       try {
         const stream = await startScreenShare();
         try {
@@ -188,6 +191,7 @@ export async function init() {
         updateControls();
         stream.getVideoTracks()[0].addEventListener('ended', () => { $('stopShare').click(); });
       } catch (e) { console.warn('Share screen cancelled or failed', e); }
+      finally { isSharingStarting = false; }
     };
 
     $('stopShare').onclick = () => {

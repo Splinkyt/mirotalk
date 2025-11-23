@@ -103,19 +103,14 @@
                 <div class="relative flex-1 glass-panel rounded-3xl overflow-hidden group shadow-2xl p-2">
                     <!-- This is where we inject remote videos -->
                     <div id="remoteVideos"></div>
-                </div>
-
-                <!-- Secondary Participants (Horizontal Strip) -->
-                <div class="h-32 flex gap-4 shrink-0 overflow-x-auto pb-2 px-1 scrollbar-hide">
-                    <!-- Self View -->
-                    <div id="localTile" class="relative w-48 rounded-2xl overflow-hidden glass-panel shrink-0 border-2 border-blue-500/30">
-                        <video id="localVideo" autoplay playsinline muted class="w-full h-full object-cover"></video>
+                    
+                    <!-- Self View (Overlay) -->
+                    <div id="localTile" class="absolute bottom-4 left-4 w-48 rounded-2xl overflow-hidden glass-panel border-2 border-blue-500/30 z-20 shadow-2xl transition-all hover:scale-105">
+                        <video id="localVideo" autoplay playsinline muted class="w-full h-full object-cover aspect-video bg-black/50"></video>
                         <span class="absolute bottom-2 left-2 text-xs bg-black/50 px-2 py-0.5 rounded-lg">You</span>
                         <!-- Fullscreen button for local tile -->
                         <button id="localFsBtn" class="tile-fs"><i class="fa-solid fa-expand"></i></button>
                     </div>
-                    
-                    <!-- Placeholder for other participants or special views if needed -->
                 </div>
             </div>
 
